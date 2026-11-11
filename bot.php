@@ -6382,7 +6382,15 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             [['text'=>"🎖پورت اختصاصی",'callback_data'=>"withSpecificPort"]],
             [['text'=>"🎗پورت اشتراکی",'callback_data'=>"withSharedPort"]]
             ]]);
-        if($userInfo['step'] != "addNewMarzbanPlan") editText($message_id, "لطفا نوعیت پورت پنل رو انتخاب کنید", $keys);
+        if($userInfo['step'] == "addNewPlan"){
+            // plans of normal panels: users are attached to an inbound that already exists in the panel,
+            // the inbound (and so protocol / network) is picked from the panel's list after days and volume
+            $stmt = $connection->prepare("UPDATE `server_plans` SET `step`=61 WHERE `active`=0");
+            $stmt->execute();
+            $stmt->close();
+            editText($message_id, "📅 | لطفا تعداد روز های اعتبار این پلن را وارد کنید:");
+        }
+        elseif($userInfo['step'] != "addNewMarzbanPlan") editText($message_id, "لطفا نوعیت پورت پنل رو انتخاب کنید", $keys);
         else editText($message_id, "📅 | لطفا تعداد روز های اعتبار این پلن را وارد کنید:");
     }
     if($step==51 and $text!=$buttonValues['cancel'] and preg_match('/^with(Specific|Shared)Port/',$data,$match)){
@@ -6435,41 +6443,48 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
+        $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0");
+        $stmt->execute();
+        $planServerId = $stmt->get_result()->fetch_assoc()['server_id'];
+        $stmt->close();
+
+        $inboundKeys = getPanelInboundKeys($planServerId);
+        if($inboundKeys === null){
+            sendMessage("❌ اتصال به پنل برقرار نشد. توکن / آدرس سرور را بررسی کنید و حجم را دوباره بفرستید.", $cancelKey);
+            exit();
+        }
+        if(count($inboundKeys) == 0){
+            sendMessage("❌ هیچ اینباند روشنی (vless / vmess / trojan با شبکه tcp / ws / grpc / kcp) در پنل پیدا نشد. اول در پنل اینباند بسازید و روشن کنید، بعد حجم را دوباره بفرستید.", $cancelKey);
+            exit();
+        }
+
         $stmt = $connection->prepare("UPDATE `server_plans` SET `volume`=?,`step`=63 WHERE `active`=0");
         $stmt->bind_param("d", $text);
         $stmt->execute();
         $stmt->close();
-        sendMessage("🛡 | لطفا آیدی سطر کانکشن در پنل را وارد کنید:");
+        sendMessage("🛡 | اینباندهای روشن پنل را ببین و یکی را برای این پلن انتخاب کن 👇\nپروتکل و نوع شبکه خودکار از پنل خوانده می‌شود.", json_encode(['inline_keyboard'=>$inboundKeys]));
     }
-    if($step==63 and $text!=$buttonValues['cancel']){
-        if(!is_numeric($text)){
-            sendMessage($mainValues['send_only_number']);
-            exit();
-        }
-        
+    if($step==63 and $text!=$buttonValues['cancel'] and preg_match('/^selectPlanInbound(\d+)$/', $data, $match)){
         $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0");
         $stmt->execute();
         $res = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
-        
-        $response = getJson($res['server_id'])->obj;
-        foreach($response as $row){
-            if($row->id == $text) {
-                $netType = json_decode($row->streamSettings)->network;
-            }
-        }        
-        if(is_null($netType)){
-            sendMessage("کانفیگی با این سطر آیدی یافت نشد");
+        $detected = getPanelInboundInfo($res['server_id'], $match[1]);
+        if(is_null($detected)){
+            alert("اینباند پیدا نشد یا خاموش است. دوباره انتخاب کن", true);
             exit();
         }
-        
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `type` = ?, `inbound_id`=?,`step`=64 WHERE `active`=0");
-        $stmt->bind_param("si", $netType, $text);
+
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `type` = ?, `protocol` = ?, `inbound_id`=?, `flow` = ?, `step`=64 WHERE `active`=0");
+        $detectedFlow = $detected['flow'] == "" ? "None" : $detected['flow'];
+        $stmt->bind_param("ssis", $detected['network'], $detected['protocol'], $detected['id'], $detectedFlow);
         $stmt->execute();
         $stmt->close();
 
-        sendMessage("لطفا ظرفیت تعداد اکانت رو پورت مورد نظر را وارد کنید");
+        $securityText = $detected['security'] == "none" ? "بدون TLS" : $detected['security'];
+        editText($message_id, "✅ اینباند انتخاب شد\n\n🔖 نام: {$detected['remark']}\n📡 پروتکل: {$detected['protocol']}\n🔉 شبکه: {$detected['network']}\n🔐 امنیت: $securityText\n🔌 پورت: {$detected['port']}");
+        sendMessage("لطفا ظرفیت تعداد اکانت رو پورت مورد نظر را وارد کنید", $cancelKey);
     }
     if($step==64 and $text!=$buttonValues['cancel']){
         if(!is_numeric($text)){

@@ -2041,6 +2041,64 @@ function RandomString($count = 9, $type = "all") {
     }
     return $randstring;
 }
+// Enabled inbounds of a panel that the bot can sell accounts on, with everything detected from the panel itself.
+// Returns null when the panel cannot be reached.
+function getPanelEnabledInbounds($server_id){
+    $res = getJson($server_id);
+    if(!is_object($res) || !isset($res->obj) || !is_array($res->obj)) return null;
+
+    $list = [];
+    foreach($res->obj as $row){
+        if(empty($row->enable)) continue;
+        if(!in_array($row->protocol, ['vless', 'vmess', 'trojan'])) continue;
+
+        $stream = json_decode($row->streamSettings, true);
+        $network = is_array($stream) && !empty($stream['network']) ? $stream['network'] : 'tcp';
+        $security = is_array($stream) && !empty($stream['security']) ? $stream['security'] : 'none';
+        if(!in_array($network, ['tcp', 'ws', 'grpc', 'kcp'])) continue;
+
+        $settings = json_decode($row->settings, true);
+        $clients = is_array($settings) && isset($settings['clients']) && is_array($settings['clients']) ? $settings['clients'] : [];
+        $flow = "";
+        if($row->protocol == 'vless'){
+            foreach($clients as $client){
+                if(!empty($client['flow'])){ $flow = $client['flow']; break; }
+            }
+            if($flow == "" && $security == 'reality' && $network == 'tcp') $flow = "xtls-rprx-vision";
+        }
+
+        $list[] = [
+            'id' => (int) $row->id,
+            'remark' => (string) $row->remark,
+            'protocol' => $row->protocol,
+            'network' => $network,
+            'security' => $security,
+            'port' => $row->port,
+            'flow' => $flow,
+            'clients' => count($clients),
+        ];
+    }
+    return $list;
+}
+function getPanelInboundInfo($server_id, $inbound_id){
+    $list = getPanelEnabledInbounds($server_id);
+    if(!$list) return null;
+    foreach($list as $inbound){
+        if($inbound['id'] == $inbound_id) return $inbound;
+    }
+    return null;
+}
+function getPanelInboundKeys($server_id){
+    $list = getPanelEnabledInbounds($server_id);
+    if(is_null($list)) return null;
+    $keys = [];
+    foreach($list as $inbound){
+        $name = $inbound['remark'] != "" ? $inbound['remark'] : "inbound " . $inbound['id'];
+        $text = "$name • {$inbound['protocol']}/{$inbound['network']}/{$inbound['security']} • {$inbound['port']} • 👥" . $inbound['clients'];
+        $keys[] = [['text' => $text, 'callback_data' => "selectPlanInbound" . $inbound['id']]];
+    }
+    return $keys;
+}
 function isDuplicateAccountError($response){
     $msg = (is_object($response) && isset($response->msg)) ? (string) $response->msg : "";
     return stripos($msg, "Duplicate email") !== false || stripos($msg, "already in use") !== false;
@@ -2156,7 +2214,7 @@ function setUser($value = 'none', $field = 'step'){
     $stmt->close();
 }
 function generateRandomString($length, $protocol) {
-    return ($protocol == 'trojan') ? substr(md5(time()),5,15) : generateUID();
+    return ($protocol == 'trojan') ? substr(bin2hex(random_bytes(16)), 0, 15) : generateUID(); // md5(time()) repeated within the same second
 }
 function addBorderImage($add){
     $border = 30;
@@ -2778,6 +2836,7 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
     $response = getJson($server_id);
     if(!$response) return null;
     $response = $response->obj;
+    $iid = null;
     foreach($response as $row){
         if($row->id == $inbound_id) {
             $iid = $row->id;
@@ -2791,36 +2850,34 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
     $id_label = $protocol == 'trojan' ? 'password' : 'id';
     if($newarr == ''){
 		if($serverType == "sanaei" || $serverType == "alireza"){
-		    if($reality == "true"){
-                $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=?");
-                $stmt->bind_param("i", $planId);
-                $stmt->execute();
-                $file_detail = $stmt->get_result()->fetch_assoc();
-                $stmt->close();
-            
-                $flow = isset($file_detail['flow']) && $file_detail['flow'] != "None" ? $file_detail['flow'] : "";
-                
-                $newClient = [
-                    "$id_label" => $client_id,
-                    "enable" => true,
-                    "email" => $remark,
-                    "limitIp" => $limitip,
-                    "flow" => $flow,
-                    "totalGB" => $volume,
-                    "expiryTime" => $expiryTime,
-                    "subId" => panelApiSafeName($remark)
-                ];
-		    }else{
-                $newClient = [
-                    "$id_label" => $client_id,
-                    "enable" => true,
-                    "email" => $remark,
-                    "limitIp" => $limitip,
-                    "totalGB" => $volume,
-                    "expiryTime" => $expiryTime,
-                    "subId" => panelApiSafeName($remark)
-                ];
+		    // flow is detected from the inbound itself: the plan's flow, else the one existing clients already use
+		    $flow = "";
+		    if($protocol == 'vless'){
+		        if($planId){
+		            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=?");
+		            $stmt->bind_param("i", $planId);
+		            $stmt->execute();
+		            $file_detail = $stmt->get_result()->fetch_assoc();
+		            $stmt->close();
+		            if(isset($file_detail['flow']) && $file_detail['flow'] != "None") $flow = $file_detail['flow'];
+		        }
+		        if($flow == "" && isset($settings['clients']) && is_array($settings['clients'])){
+		            foreach($settings['clients'] as $existingClient){
+		                if(!empty($existingClient['flow'])){ $flow = $existingClient['flow']; break; }
+		            }
+		        }
 		    }
+
+		    $newClient = [
+		        "$id_label" => $client_id,
+		        "enable" => true,
+		        "email" => $remark,
+		        "limitIp" => $limitip,
+		        "totalGB" => $volume,
+		        "expiryTime" => $expiryTime,
+		        "subId" => panelApiSafeName($remark)
+		    ];
+		    if($protocol == 'vless') $newClient['flow'] = $flow;
     	}else{
             $newClient = [
                 "$id_label" => $client_id,

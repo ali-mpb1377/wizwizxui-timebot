@@ -63,6 +63,8 @@ All bot -> panel communication goes through one layer, `panelapi.php` (`panelApi
 
 For 3x-ui v3 the account name chosen at purchase (typed by the user or random) is stored as the client's `subId`, and the bot shows the subscription link built by the panel (`subURI` from the panel settings + `subId`). Enable the subscription service in the panel first. In the bot settings, "show sub link" and "show config link" can be switched on/off independently.
 
+Plans: the admin picks one of the panel's enabled inbounds from a list (protocol, network, security and flow are read from the panel) and buyers are attached to that inbound as clients.
+
 Based on [wizwizdev/wizwizxui-timebot](https://github.com/wizwizdev/wizwizxui-timebot) (MIT).
 
 # Installation Ubuntu-20.4 
