@@ -184,7 +184,7 @@ if($userInfo['step'] == "addNewAdmin" && $from_id === $admin && $text != $button
 if(($data=="botSettings" or preg_match("/^changeBot(\w+)/",$data,$match)) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if($data!="botSettings"){
         if($match[1] == "cartToCartAutoAcceptType") $newValue = $botState[$match[1]] == "0"?"1":($botState[$match[1]] == "1"?"2":0);
-        elseif($match[1] == "configLinkState") $newValue = ($botState[$match[1]] ?? "on") == "off"?"on":"off"; // unset means "on"
+        elseif($match[1] == "configLinkState") $newValue = $botState[$match[1]]!="off"?"off":"on"; // unset = on
         else $newValue = $botState[$match[1]]=="on"?"off":"on";
         setSettings($match[1], $newValue);
     }
@@ -1222,7 +1222,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
     $stmt->bind_param("i", $server_id);
     $stmt->execute();
     $serverInfo = $stmt->get_result()->fetch_assoc();
-    $srv_remark = panelApiSafeName($serverInfo['remark']);
+    $srv_remark = $serverInfo['remark'];
     $stmt->close();
     $savedinfo = file_get_contents('settings/temp.txt');
     $savedinfo = explode('-',$savedinfo);
@@ -1279,7 +1279,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
                 $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid); 
                 
                 if(!$response->success){
-                    if(isDuplicateAccountError($response)) $remark .= RandomString();
+                    if(isDuplicateClientError($response->msg)) $remark .= RandomString();
                     elseif(strstr($response->msg, "Port already exists")) $port = rand(1111,65000);
     
                     $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid); 
@@ -1288,7 +1288,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
         }else {
             $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid); 
             if(!$response->success){
-                if(isDuplicateAccountError($response)) $remark .= RandomString();
+                if(isDuplicateClientError($response->msg)) $remark .= RandomString();
                 
                 $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid); 
             }
@@ -1315,19 +1315,36 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
             $vray_link = json_encode($response->vray_links);
         }
         else{
-            $token = accountToken($serverType, $remark);
+            $token = getNewOrderToken($server_id, $serverType, $response);
             $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni);
-            $subLink = $botState['subLinkState']=="on"?accountSubLink($server_id, $serverType, $token):"";
+            $subLink = $botState['subLinkState']=="on"?getOrderSubLink($server_id, $serverType, $token):"";
             $vray_link = json_encode($vraylink);
         }
         foreach($vraylink as $link){
             $acc_text = "
     
         🔮 $remark \n " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"<code>$link</code>":"");
-            if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= 
+            if($botState['subLinkState'] == "on") $acc_text .= 
             " \n🌐 subscription : <code>$subLink</code>";
         
-            sendAccountPhoto(accountQrData($link, isset($subLink) ? $subLink : ""), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
+            $file = RandomString() .".png";
+            
+            QRcode::png(getQrContent($link, $subLink), $file, $ecc, $pixel_Size, $frame_Size);
+        	addBorderImage($file);
+        	
+        	
+        	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
+            $qrImage = imagecreatefrompng($file);
+            
+            $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
+            imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
+            imagepng($backgroundImage, $file);
+            imagedestroy($backgroundImage);
+            imagedestroy($qrImage);
+
+
+        	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+            unlink($file);
         }
         $stmt->bind_param("ssiiisssisiii", $uid, $token, $fid, $server_id, $inbound_id, $remark, $uniqid, $protocol, $expire_date, $vray_link, $price, $date, $rahgozar);
         $stmt->execute();
@@ -1664,7 +1681,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
     $stmt->execute();
     $serverInfo = $stmt->get_result()->fetch_assoc();
     $serverTitle = $serverInfo['title'];
-    $srv_remark = panelApiSafeName($serverInfo['remark']);
+    $srv_remark = $serverInfo['remark'];
     $stmt->close();
 
     $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=?");
@@ -1699,7 +1716,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
             $rnd = rand(1111,99999);
             $remark = "{$srv_remark}-{$from_id}-{$rnd}";
         }
-        if(!empty($description)) $remark = panelApiSafeName($description);
+        if(!empty($description)) $remark = $description;
         if($portType == "auto"){
             file_put_contents('settings/temp.txt',$port.'-'.$last_num);
         }else{
@@ -1718,7 +1735,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
             }else{
                 $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid); 
                 if(!$response->success){
-                    if(isDuplicateAccountError($response)) $remark .= RandomString();
+                    if(isDuplicateClientError($response->msg)) $remark .= RandomString();
                     elseif(strstr($response->msg, "Port already exists")) $port = rand(1111,65000);
                     
                     $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid);
@@ -1727,7 +1744,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
         }else {
             $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid); 
             if(!$response->success){
-                if(isDuplicateAccountError($response)) $remark .= RandomString();
+                if(isDuplicateClientError($response->msg)) $remark .= RandomString();
 
                 $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid);
             } 
@@ -1753,8 +1770,8 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
             $vraylink = [$subLink];
             $vray_link = json_encode($response->vray_links);
         }else{
-            $token = accountToken($serverType, $remark);
-            $subLink = $botState['subLinkState']=="on"?accountSubLink($server_id, $serverType, $token):"";
+            $token = getNewOrderToken($server_id, $serverType, $response);
+            $subLink = $botState['subLinkState']=="on"?getOrderSubLink($server_id, $serverType, $token):"";
     
             $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni);
             $vray_link = json_encode($vraylink);
@@ -1770,7 +1787,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
 
-if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
+if($botState['subLinkState'] == "on") $acc_text .= "
 
 🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
 
@@ -1779,7 +1796,25 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
         
         ";
               
-            sendAccountPhoto(accountQrData($link, isset($subLink) ? $subLink : ""), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
+            $file = RandomString() .".png";
+            $ecc = 'L';
+            $pixel_Size = 11;
+            $frame_Size = 0;
+            
+            QRcode::png(getQrContent($link, $subLink), $file, $ecc, $pixel_Size, $frame_Size);
+        	addBorderImage($file);
+        	
+        	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
+            $qrImage = imagecreatefrompng($file);
+            
+            $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
+            imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
+            imagepng($backgroundImage, $file);
+            imagedestroy($backgroundImage);
+            imagedestroy($qrImage);
+
+        	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+            unlink($file);
         }
         
         $agentBought = $payInfo['agent_bought'];
@@ -2911,7 +2946,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
     $stmt->bind_param("i", $server_id);
     $stmt->execute();
     $serverInfo = $stmt->get_result()->fetch_assoc();
-    $srv_remark = panelApiSafeName($serverInfo['remark']);
+    $srv_remark = $serverInfo['remark'];
     $stmt->close();
     
     $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=?");
@@ -2945,7 +2980,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
         }else{
             $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid); 
             if(!$response->success){
-                if(isDuplicateAccountError($response)) $remark .= RandomString();
+                if(isDuplicateClientError($response->msg)) $remark .= RandomString();
                 elseif(strstr($response->msg, "Port already exists")) $port = rand(1111,65000);
                 
                 $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid);
@@ -2954,7 +2989,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
     }else {
         $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid); 
         if(!$response->success){
-            if(isDuplicateAccountError($response)) $remark .= RandomString();
+            if(isDuplicateClientError($response->msg)) $remark .= RandomString();
 
             $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid);
         } 
@@ -2987,8 +3022,8 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
         $vray_link = json_encode($response->vray_links);
     }
     else{
-        $token = accountToken($serverType, $remark);
-        $subLink = $botState['subLinkState']=="on"?accountSubLink($server_id, $serverType, $token):"";
+        $token = getNewOrderToken($server_id, $serverType, $response);
+        $subLink = $botState['subLinkState']=="on"?getOrderSubLink($server_id, $serverType, $token):"";
     
         $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni);
         $vray_link = json_encode($vraylink);
@@ -3005,14 +3040,32 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
 ⏰ مدت سرویس: $days روز⁮⁮ ⁮⁮
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
-if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
+if($botState['subLinkState'] == "on") $acc_text .= "
 
 🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
 
 
 🌐 subscription : <code>$subLink</code>"; 
     
-        sendAccountPhoto(accountQrData($link, isset($subLink) ? $subLink : ""), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
+        $file = RandomString() .".png";
+        $ecc = 'L';
+        $pixel_Size = 11;
+        $frame_Size = 0;
+        
+        QRcode::png(getQrContent($link, $subLink), $file, $ecc, $pixel_Size, $frame_Size);
+    	addBorderImage($file);
+    	
+        $backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
+        $qrImage = imagecreatefrompng($file);
+        
+        $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
+        imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
+        imagepng($backgroundImage, $file);
+        imagedestroy($backgroundImage);
+        imagedestroy($qrImage);
+
+    	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+        unlink($file);
     }
 
     
@@ -3072,14 +3125,26 @@ if(preg_match('/^showQr(Sub|Config)(\d+)/',$data,$match)){
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
     if($match[1] == "Sub"){
-        $stmt = $connection->prepare("SELECT `type` FROM `server_config` WHERE `id`=?");
-        $stmt->bind_param("i", $order['server_id']);
-        $stmt->execute();
-        $qrServerType = $stmt->get_result()->fetch_assoc()['type'];
-        $stmt->close();
-        $subLink = accountSubLink($order['server_id'], $qrServerType, $order['token']);
-        $acc_text = $subLink != "" ? "🌐 subscription : <code>$subLink</code>" : "";
-        sendAccountPhoto($subLink, $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
+        $subLink = getOrderSubLink($order['server_id'], getPanelServerType($order['server_id']), $order['token']);
+        $file = RandomString() .".png";
+        $ecc = 'L';
+        $pixel_Size = 11;
+        $frame_Size = 0;
+        
+        QRcode::png($subLink, $file, $ecc, $pixel_Size, $frame_Size);
+    	addBorderImage($file);
+    	
+    	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
+        $qrImage = imagecreatefrompng($file);
+        
+        $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
+        imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
+        imagepng($backgroundImage, $file);
+        imagedestroy($backgroundImage);
+        imagedestroy($qrImage);
+
+    	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+        unlink($file);
     }
     elseif($match[1] == "Config"){
 
@@ -3089,8 +3154,25 @@ if(preg_match('/^showQr(Sub|Config)(\d+)/',$data,$match)){
         define('IMAGE_WIDTH',540);
         define('IMAGE_HEIGHT',540);
         foreach($vraylink as $vray_link){
-            $acc_text = $botState['configLinkState'] != "off" ? "<code>$vray_link</code>" : "";
-            sendAccountPhoto(accountQrData($vray_link, isset($subLink) ? $subLink : ""), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
+            $file = RandomString() .".png";
+            $ecc = 'L';
+            $pixel_Size = 11;
+            $frame_Size = 0;
+            
+            QRcode::png($vray_link, $file, $ecc, $pixel_Size, $frame_Size);
+        	addBorderImage($file);
+            	
+        	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
+            $qrImage = imagecreatefrompng($file);
+            
+            $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
+            imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
+            imagepng($backgroundImage, $file);
+            imagedestroy($backgroundImage);
+            imagedestroy($qrImage);
+            
+        	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+            unlink($file);
         }
     }
 }
@@ -3276,7 +3358,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     $stmt->bind_param("i", $server_id);
     $stmt->execute();
     $serverInfo = $stmt->get_result()->fetch_assoc();
-    $srv_remark = panelApiSafeName($serverInfo['remark']);
+    $srv_remark = $serverInfo['remark'];
     $stmt->close();
 
     $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=?");
@@ -3310,7 +3392,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
         }else{
             $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid); 
             if(!$response->success){
-                if(isDuplicateAccountError($response)) $remark .= RandomString();
+                if(isDuplicateClientError($response->msg)) $remark .= RandomString();
                 elseif(strstr($response->msg, "Port already exists")) $port = rand(1111,65000);
 
                 $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid);
@@ -3319,7 +3401,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     }else {
         $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid); 
         if(!$response->success){
-            if(isDuplicateAccountError($response)) $remark .= RandomString();
+            if(isDuplicateClientError($response->msg)) $remark .= RandomString();
 
             $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid);
         } 
@@ -3349,8 +3431,8 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
         $vray_link= json_encode($response->vray_links);
     }
     else{
-        $token = accountToken($serverType, $remark);
-        $subLink = $botState['subLinkState']=="on"?accountSubLink($server_id, $serverType, $token):"";
+        $token = getNewOrderToken($server_id, $serverType, $response);
+        $subLink = $botState['subLinkState']=="on"?getOrderSubLink($server_id, $serverType, $token):"";
     
         $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id);
         $vray_link= json_encode($vraylink);
@@ -3367,13 +3449,31 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
 ⏰ مدت سرویس: $days روز⁮⁮ ⁮⁮
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$vray_link</code>":"");
-if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
+if($botState['subLinkState'] == "on") $acc_text .= "
 
 🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
 
 \n🌐 subscription : <code>$subLink</code>";
     
-        sendAccountPhoto(accountQrData($vray_link, isset($subLink) ? $subLink : ""), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
+        $file = RandomString() .".png";
+        $ecc = 'L';
+        $pixel_Size = 11;
+        $frame_Size = 0;
+    
+        QRcode::png(getQrContent($vray_link, $subLink), $file, $ecc, $pixel_Size, $frame_Size);
+    	addBorderImage($file);
+    	
+    	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
+        $qrImage = imagecreatefrompng($file);
+        
+        $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
+        imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
+        imagepng($backgroundImage, $file);
+        imagedestroy($backgroundImage);
+        imagedestroy($qrImage);
+
+    	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+        unlink($file);
     }
     sendMessage('✅ کانفیگ و براش ارسال کردم', getMainKeys());
     
@@ -3561,7 +3661,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
         $stmt->bind_param("i", $server_id);
         $stmt->execute();
         $serverInfo = $stmt->get_result()->fetch_assoc();
-        $srv_remark = panelApiSafeName($serverInfo['remark']);
+        $srv_remark = $serverInfo['remark'];
         $serverTitle = $serverInfo['title'];
         $stmt->close();
     
@@ -3623,7 +3723,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
                 else{
                     $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid); 
                     if(!$response->success){
-                        if(isDuplicateAccountError($response)) $remark .= RandomString();
+                        if(isDuplicateClientError($response->msg)) $remark .= RandomString();
                         elseif(strstr($response->msg, "Port already exists")) $port = rand(1111,65000);
 
                         $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid);
@@ -3632,7 +3732,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
             }else {
                 $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid); 
                 if(!$response->success){
-                    if(isDuplicateAccountError($response)) $remark .= RandomString();
+                    if(isDuplicateClientError($response->msg)) $remark .= RandomString();
 
                     $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid);
                 } 
@@ -3659,10 +3759,10 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
                 $vray_link= json_encode($response->vray_links);
             }
             else{
-                $token = accountToken($serverType, $remark);
+                $token = getNewOrderToken($server_id, $serverType, $response);
                 $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni);
                 $vray_link= json_encode($vraylink);
-                $subLink = $botState['subLinkState']=="on"?accountSubLink($server_id, $serverType, $token):"";
+                $subLink = $botState['subLinkState']=="on"?getOrderSubLink($server_id, $serverType, $token):"";
             }
 
             foreach($vraylink as $link){
@@ -3674,13 +3774,31 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
 ⏰ مدت سرویس: $days روز⁮⁮ ⁮⁮
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
-if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
+if($botState['subLinkState'] == "on") $acc_text .= "
 
 🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
 
 \n🌐 subscription : <code>$subLink</code>";
             
-                sendAccountPhoto(accountQrData($link, isset($subLink) ? $subLink : ""), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
+                $file = RandomString() .".png";
+                $ecc = 'L';
+                $pixel_Size = 11;
+                $frame_Size = 0;
+                
+                QRcode::png(getQrContent($link, $subLink), $file, $ecc, $pixel_Size, $frame_Size);
+            	addBorderImage($file);
+            	
+	        	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
+                $qrImage = imagecreatefrompng($file);
+                
+                $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
+                imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
+                imagepng($backgroundImage, $file);
+                imagedestroy($backgroundImage);
+                imagedestroy($qrImage);
+
+            	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+                unlink($file);
             }
             
         	$stmt = $connection->prepare("INSERT INTO `orders_list` 
@@ -4080,7 +4198,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
         $stmt->bind_param("i", $server_id);
         $stmt->execute();
         $serverInfo = $stmt->get_result()->fetch_assoc();
-        $srv_remark = panelApiSafeName($serverInfo['remark']);
+        $srv_remark = $serverInfo['remark'];
         $stmt->close();
     
         $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=?");
@@ -4137,7 +4255,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
                 else{
                     $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid); 
                     if(!$response->success){
-                        if(isDuplicateAccountError($response)) $remark .= RandomString();
+                        if(isDuplicateClientError($response->msg)) $remark .= RandomString();
                         elseif(strstr($response->msg, "Port already exists")) $port = rand(1111,65000);
 
                         $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid);
@@ -4146,7 +4264,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
             }else {
                 $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid); 
                 if(!$response->success){
-                    if(isDuplicateAccountError($response)) $remark .= RandomString();
+                    if(isDuplicateClientError($response->msg)) $remark .= RandomString();
 
                     $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid);
                 } 
@@ -4172,8 +4290,8 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
                 $vray_link = json_encode($response->vray_links);
             }
             else{
-                $token = accountToken($serverType, $remark);
-                $subLink = $botState['subLinkState']=="on"?accountSubLink($server_id, $serverType, $token):"";
+                $token = getNewOrderToken($server_id, $serverType, $response);
+                $subLink = $botState['subLinkState']=="on"?getOrderSubLink($server_id, $serverType, $token):"";
         
                 $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni);
                 $vray_link = json_encode($vraylink);
@@ -4187,13 +4305,32 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
 ⏰ مدت سرویس: $days روز
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
-if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
+if($botState['subLinkState'] == "on") $acc_text .= "
 
 🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
 
 \n🌐 subscription : <code>$subLink</code>";
             
-                sendAccountPhoto(accountQrData($link, isset($subLink) ? $subLink : ""), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
+                $file = RandomString() .".png";
+                $ecc = 'L';
+                $pixel_Size = 11;
+                $frame_Size = 0;
+            
+                QRcode::png(getQrContent($link, $subLink), $file, $ecc, $pixel_Size, $frame_Size);
+            	addBorderImage($file);
+            	
+            	
+	        	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
+                $qrImage = imagecreatefrompng($file);
+                
+                $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
+                imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
+                imagepng($backgroundImage, $file);
+                imagedestroy($backgroundImage);
+                imagedestroy($qrImage);
+
+            	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+                unlink($file);
             }
             $agent_bought = $payInfo['agent_bought'];
     
@@ -5540,7 +5677,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
     $stmt->bind_param("i", $server_id);
     $stmt->execute();
     $serverInfo = $stmt->get_result()->fetch_assoc();
-    $srv_remark = panelApiSafeName($serverInfo['remark']);
+    $srv_remark = $serverInfo['remark'];
     $stmt->close();
 
     $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=?");
@@ -5582,7 +5719,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         }else{
             $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $id); 
             if(!$response->success){
-                if(isDuplicateAccountError($response)) $remark .= RandomString();
+                if(isDuplicateClientError($response->msg)) $remark .= RandomString();
                 elseif(strstr($response->msg, "Port already exists")) $port = rand(1111,65000);
 
                 $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $id);
@@ -5591,7 +5728,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
     }else {
         $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $id); 
         if(!$response->success){
-            if(isDuplicateAccountError($response)) $remark .= RandomString();
+            if(isDuplicateClientError($response->msg)) $remark .= RandomString();
 
             $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $id);
         }
@@ -5618,8 +5755,8 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         $vraylink = [$subLink];
         $vray_link = json_encode($response->vray_links);
     }else{
-        $token = accountToken($serverType, $remark);
-        $subLink = $botState['subLinkState']=="on"?accountSubLink($server_id, $serverType, $token):"";
+        $token = getNewOrderToken($server_id, $serverType, $response);
+        $subLink = $botState['subLinkState']=="on"?getOrderSubLink($server_id, $serverType, $token):"";
         $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni);
         $vray_link = json_encode($vraylink);
     }
@@ -5634,7 +5771,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
 ⏰ مدت سرویس: $days روز
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
-if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
+if($botState['subLinkState'] == "on") $acc_text .= "
 
 🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
 
@@ -5644,7 +5781,7 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
         $ecc = 'L'; 
         $pixel_Size = 11;
         $frame_Size = 0;
-        QRcode::png($link, $file, $ecc, $pixel_Size, $frame_size);
+        QRcode::png(getQrContent($link, $subLink), $file, $ecc, $pixel_Size, $frame_size);
     	addBorderImage($file);
     	
     	
@@ -6257,7 +6394,21 @@ if(preg_match('/sConfigUpdate(\d+)/', $data,$match)){
         $pixel_Size = 11;
         $frame_Size = 0;
         
-        sendAccountPhoto(accountQrData($vray_link, isset($subLink) ? $subLink : ""), $acc_text, null, null);
+        $file = RandomString() .".png";
+        QRcode::png($vray_link, $file, $ecc, $pixel_Size, $frame_Size);
+    	addBorderImage($file);
+    	
+        $backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
+        $qrImage = imagecreatefrompng($file);
+        
+        $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
+        imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
+        imagepng($backgroundImage, $file);
+        imagedestroy($backgroundImage);
+        imagedestroy($qrImage);
+
+        sendPhoto($botUrl . $file, $acc_text,null,"HTML");
+        unlink($file);
     }
 }
 
@@ -6382,15 +6533,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             [['text'=>"🎖پورت اختصاصی",'callback_data'=>"withSpecificPort"]],
             [['text'=>"🎗پورت اشتراکی",'callback_data'=>"withSharedPort"]]
             ]]);
-        if($userInfo['step'] == "addNewPlan"){
-            // plans of normal panels: users are attached to an inbound that already exists in the panel,
-            // the inbound (and so protocol / network) is picked from the panel's list after days and volume
-            $stmt = $connection->prepare("UPDATE `server_plans` SET `step`=61 WHERE `active`=0");
-            $stmt->execute();
-            $stmt->close();
-            editText($message_id, "📅 | لطفا تعداد روز های اعتبار این پلن را وارد کنید:");
-        }
-        elseif($userInfo['step'] != "addNewMarzbanPlan") editText($message_id, "لطفا نوعیت پورت پنل رو انتخاب کنید", $keys);
+        if($userInfo['step'] != "addNewMarzbanPlan") editText($message_id, "لطفا نوعیت پورت پنل رو انتخاب کنید", $keys);
         else editText($message_id, "📅 | لطفا تعداد روز های اعتبار این پلن را وارد کنید:");
     }
     if($step==51 and $text!=$buttonValues['cancel'] and preg_match('/^with(Specific|Shared)Port/',$data,$match)){
@@ -6443,48 +6586,41 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0");
-        $stmt->execute();
-        $planServerId = $stmt->get_result()->fetch_assoc()['server_id'];
-        $stmt->close();
-
-        $inboundKeys = getPanelInboundKeys($planServerId);
-        if($inboundKeys === null){
-            sendMessage("❌ اتصال به پنل برقرار نشد. توکن / آدرس سرور را بررسی کنید و حجم را دوباره بفرستید.", $cancelKey);
-            exit();
-        }
-        if(count($inboundKeys) == 0){
-            sendMessage("❌ هیچ اینباند روشنی (vless / vmess / trojan با شبکه tcp / ws / grpc / kcp) در پنل پیدا نشد. اول در پنل اینباند بسازید و روشن کنید، بعد حجم را دوباره بفرستید.", $cancelKey);
-            exit();
-        }
-
         $stmt = $connection->prepare("UPDATE `server_plans` SET `volume`=?,`step`=63 WHERE `active`=0");
         $stmt->bind_param("d", $text);
         $stmt->execute();
         $stmt->close();
-        sendMessage("🛡 | اینباندهای روشن پنل را ببین و یکی را برای این پلن انتخاب کن 👇\nپروتکل و نوع شبکه خودکار از پنل خوانده می‌شود.", json_encode(['inline_keyboard'=>$inboundKeys]));
+        sendMessage("🛡 | لطفا آیدی سطر کانکشن در پنل را وارد کنید:");
     }
-    if($step==63 and $text!=$buttonValues['cancel'] and preg_match('/^selectPlanInbound(\d+)$/', $data, $match)){
+    if($step==63 and $text!=$buttonValues['cancel']){
+        if(!is_numeric($text)){
+            sendMessage($mainValues['send_only_number']);
+            exit();
+        }
+        
         $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0");
         $stmt->execute();
         $res = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
-        $detected = getPanelInboundInfo($res['server_id'], $match[1]);
-        if(is_null($detected)){
-            alert("اینباند پیدا نشد یا خاموش است. دوباره انتخاب کن", true);
+        
+        $response = getJson($res['server_id'])->obj;
+        foreach($response as $row){
+            if($row->id == $text) {
+                $netType = json_decode($row->streamSettings)->network;
+            }
+        }        
+        if(is_null($netType)){
+            sendMessage("کانفیگی با این سطر آیدی یافت نشد");
             exit();
         }
-
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `type` = ?, `protocol` = ?, `inbound_id`=?, `flow` = ?, `step`=64 WHERE `active`=0");
-        $detectedFlow = $detected['flow'] == "" ? "None" : $detected['flow'];
-        $stmt->bind_param("ssis", $detected['network'], $detected['protocol'], $detected['id'], $detectedFlow);
+        
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `type` = ?, `inbound_id`=?,`step`=64 WHERE `active`=0");
+        $stmt->bind_param("si", $netType, $text);
         $stmt->execute();
         $stmt->close();
 
-        $securityText = $detected['security'] == "none" ? "بدون TLS" : $detected['security'];
-        editText($message_id, "✅ اینباند انتخاب شد\n\n🔖 نام: {$detected['remark']}\n📡 پروتکل: {$detected['protocol']}\n🔉 شبکه: {$detected['network']}\n🔐 امنیت: $securityText\n🔌 پورت: {$detected['port']}");
-        sendMessage("لطفا ظرفیت تعداد اکانت رو پورت مورد نظر را وارد کنید", $cancelKey);
+        sendMessage("لطفا ظرفیت تعداد اکانت رو پورت مورد نظر را وارد کنید");
     }
     if($step==64 and $text!=$buttonValues['cancel']){
         if(!is_numeric($text)){
@@ -6656,6 +6792,155 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         setUser();
     }
 }
+/* ------------------------------------------------------------------
+ * ⚡ Plan from the panel (3X-UI API servers)
+ * Everything (inbound, protocol, network, flow) is read from the panel,
+ * the admin only types days + volume (+ price).
+ * ------------------------------------------------------------------ */
+if($data == "addPanelPlan" and ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $apiUser = PANEL_API_TOKEN_USER;
+    $stmt = $connection->prepare("SELECT si.`id`, si.`title` FROM `server_info` si JOIN `server_config` sc ON sc.`id` = si.`id` WHERE si.`active` = 1 AND sc.`username` = ?");
+    $stmt->bind_param("s", $apiUser);
+    $stmt->execute();
+    $apiServers = $stmt->get_result();
+    $stmt->close();
+
+    $keys = [];
+    while($srv = $apiServers->fetch_assoc()) $keys[] = ['text' => $srv['title'], 'callback_data' => "panelPlanServer" . $srv['id']];
+    if(count($keys) == 0){
+        alert("هیچ سرور 3X-UI با API ثبت نشده، اول از مدیریت سرور ها ( ثبت 3X-UI فقط API توکن ) سرور را اضافه کنید");
+        exit();
+    }
+    $keys = array_chunk($keys, 2);
+    $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "backplan"]];
+    editText($message_id, "⚡ سرور مورد نظر را انتخاب کنید:", json_encode(['inline_keyboard' => $keys]));
+    exit();
+}
+if(preg_match('/^panelPlanServer(\d+)/',$data,$match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $panelServerId = (int)$match[1];
+    $panelList = getJson($panelServerId);
+    if(!is_object($panelList) || empty($panelList->success) || !is_array($panelList->obj)){
+        alert("اتصال به پنل برقرار نشد، توکن و آدرس سرور را بررسی کنید");
+        exit();
+    }
+    $usable = [];
+    foreach($panelList->obj as $row){
+        if(empty($row->enable)) continue;
+        if(!in_array($row->protocol, ['vless', 'vmess', 'trojan'])) continue;
+        $usable[] = $row;
+    }
+    if(count($usable) == 0){
+        alert("هیچ اینباند فعالی ( vless / vmess / trojan ) در پنل پیدا نشد");
+        exit();
+    }
+    if(count($usable) == 1){
+        $data = "panelPlanInbound" . $panelServerId . "_" . $usable[0]->id;   // single inbound: nothing to ask
+    }else{
+        $keys = [];
+        foreach($usable as $row) $keys[] = [['text' => $row->remark . " • " . $row->protocol . " • " . $row->port, 'callback_data' => "panelPlanInbound" . $panelServerId . "_" . $row->id]];
+        $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "addPanelPlan"]];
+        editText($message_id, "🛡 اینباند مورد نظر پلن را انتخاب کنید:", json_encode(['inline_keyboard' => $keys]));
+        exit();
+    }
+}
+if(preg_match('/^panelPlanInbound(\d+)_(\d+)/',$data,$match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    setUser('panelPlanDays' . json_encode(['server_id' => (int)$match[1], 'inbound_id' => (int)$match[2]]));
+    sendMessage("📅 | تعداد روز های اعتبار این پلن را وارد کنید:", $cancelKey);
+    exit();
+}
+if(preg_match('/^panelPlanDays(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(!is_numeric($text) || $text <= 0){
+        sendMessage($mainValues['send_only_number']);
+        exit();
+    }
+    $planData = json_decode($match[1], true);
+    $planData['days'] = $text + 0;
+    setUser('panelPlanVolume' . json_encode($planData));
+    sendMessage("🔋 | حجم این پلن را به GB وارد کنید ( 0 = نامحدود ):");
+    exit();
+}
+if(preg_match('/^panelPlanVolume(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(!is_numeric($text) || $text < 0){
+        sendMessage($mainValues['send_only_number']);
+        exit();
+    }
+    $planData = json_decode($match[1], true);
+    $planData['volume'] = $text + 0;
+    setUser('panelPlanPrice' . json_encode($planData));
+    sendMessage("💰 | قیمت پلن را به تومان وارد کنید:");
+    exit();
+}
+if(preg_match('/^panelPlanPrice(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(!is_numeric($text) || $text < 0){
+        sendMessage($mainValues['send_only_number']);
+        exit();
+    }
+    $planData = json_decode($match[1], true);
+    $planData['price'] = (int)$text;
+
+    $stmt = $connection->prepare("SELECT `id`, `title` FROM `server_categories` WHERE `parent` = 0 AND `active` = 1");
+    $stmt->execute();
+    $planCats = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    if(count($planCats) == 0){
+        sendMessage("⚠️ هیچ دسته فعالی وجود ندارد، اول یک دسته بسازید و دوباره تلاش کنید", $removeKeyboard);
+        setUser();
+        exit();
+    }
+    if(count($planCats) == 1){
+        // single category: use it and continue to the creation step below
+        $data = "panelPlanCat" . $planCats[0]['id'];
+        $userInfo['step'] = 'panelPlanCat' . json_encode($planData);
+    }else{
+        $keys = [];
+        foreach($planCats as $cat) $keys[] = [['text' => $cat['title'], 'callback_data' => "panelPlanCat" . $cat['id']]];
+        setUser('panelPlanCat' . json_encode($planData));
+        sendMessage("🔰 دسته پلن را انتخاب کنید:", json_encode(['inline_keyboard' => $keys]));
+        exit();
+    }
+}
+if(preg_match('/^panelPlanCat(\d+)/',$data,$match) and preg_match('/^panelPlanCat(.*)/',$userInfo['step'],$stepMatch) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $catId = (int)$match[1];
+    $planData = json_decode($stepMatch[1], true);
+
+    $panelList = getJson($planData['server_id']);
+    $found = null;
+    if(is_object($panelList) && is_array($panelList->obj)){
+        foreach($panelList->obj as $row) if($row->id == $planData['inbound_id']) $found = $row;
+    }
+    if(!$found){
+        sendMessage("⚠️ اینباند در پنل پیدا نشد، دوباره تلاش کنید", $removeKeyboard);
+        setUser();
+        exit();
+    }
+    $planProtocol = $found->protocol;
+    $streamInfo = json_decode($found->streamSettings);
+    $planNet = $streamInfo->network ?? "tcp";
+    $planFlow = (($streamInfo->security ?? "") == "reality" && $planNet == "tcp" && $planProtocol == "vless") ? "xtls-rprx-vision" : "None";
+
+    $planTitle = $planData['days'] . " روزه " . ($planData['volume'] == 0 ? "نامحدود" : $planData['volume'] . " گیگ");
+    $planDays = (float)$planData['days'];
+    $planVolume = (float)$planData['volume'];
+    $planCapacity = 100000;   // capacity of a shared inbound plan, decreases with every sale
+    $planLimitIp = 0;
+    $planPrice = (int)$planData['price'];
+    $planDate = (string)$time;
+    $planServerId = (int)$planData['server_id'];
+    $planInboundId = (int)$planData['inbound_id'];
+
+    $stmt = $connection->prepare("INSERT INTO `server_plans` (`fileid`, `catid`, `server_id`, `inbound_id`, `acount`, `limitip`, `title`, `protocol`, `days`, `volume`, `type`, `price`, `descr`, `pic`, `active`, `step`, `date`, `rahgozar`, `flow`)
+                                  VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', 1, 10, ?, 0, ?)");
+    $stmt->bind_param("iiiiissddsiss", $catId, $planServerId, $planInboundId, $planCapacity, $planLimitIp, $planTitle, $planProtocol, $planDays, $planVolume, $planNet, $planPrice, $planDate, $planFlow);
+    $stmt->execute();
+    $stmt->close();
+
+    sendMessage("☑️ | پلن «$planTitle» با قیمت " . number_format($planPrice) . " تومان ساخته شد ( پروتکل $planProtocol • شبکه $planNet )", $removeKeyboard);
+    sendMessage($mainValues['reached_main_menu'], getAdminKeys());
+    setUser();
+    exit();
+}
 if($data == 'backplan' and ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("SELECT * FROM `server_info` WHERE `active`=1");
     $stmt->execute();
@@ -6670,6 +6955,7 @@ if($data == 'backplan' and ($from_id == $admin || $userInfo['isAdmin'] == true))
     }
     $keyboard = array_chunk($keyboard,2);
     $keyboard[] = [['text'=>"➖➖➖",'callback_data'=>"wizwizch"]];
+    $keyboard[] = [['text'=>'⚡ افزودن پلن از پنل (3X-UI API)','callback_data'=>"addPanelPlan"]];
     $keyboard[] = [['text'=>'➕ افزودن پلن اختصاصی و اشتراکی','callback_data'=>"addNewPlan"]];
     $keyboard[] = [
         ['text'=>'➕ افزودن پلن رهگذر','callback_data'=>"addNewRahgozarPlan"],
@@ -7398,7 +7684,8 @@ if(preg_match('/changAccountConnectionLink(\d+)/', $data,$match)){
         }
         $newUuid = $update_response->newUuid;
         $vraylink = getConnectionLink($server_id, $newUuid, $protocol, $remark, $port, $netType, $inboundId, $rahgozar, $customPath, $customPort, $customSni);
-        $newToken = $serverType == "sanaei" ? $order['token'] : RandomString(30);
+        // keep the panel subId: renewing the uuid does not change the client's subId on the panel
+        $newToken = (!empty($order['token']) && strlen($order['token']) != 30)?$order['token']:RandomString(30);
     }
 
     
@@ -8132,7 +8419,7 @@ if(preg_match('/switchServer(.+)_(.+)/',$data,$match)){
     $stmt = $connection->prepare("SELECT * FROM `server_info` WHERE `id`=?");
     $stmt->bind_param("i", $sid);
     $stmt->execute();
-    $srv_remark = panelApiSafeName($stmt->get_result()->fetch_assoc()['remark']);
+    $srv_remark = $stmt->get_result()->fetch_assoc()['remark'];
 
 
     if($botState['remark'] == "digits"){
@@ -8179,7 +8466,7 @@ if(preg_match('/switchServer(.+)_(.+)/',$data,$match)){
                       "limitIp" => $remove_response['limitIp'],
                       "totalGB" => $total - $up - $down,
                       "expiryTime" => $remove_response['expiryTime'],
-                      "subId" => panelApiSafeName($newRemark)
+                      "subId" => makeSubId($newRemark)
                     ];			        
 			    }else{
                     $newArr = [
@@ -8189,7 +8476,7 @@ if(preg_match('/switchServer(.+)_(.+)/',$data,$match)){
                       "limitIp" => $remove_response['limitIp'],
                       "totalGB" => $total - $up - $down,
                       "expiryTime" => $remove_response['expiryTime'],
-                      "subId" => panelApiSafeName($newRemark)
+                      "subId" => makeSubId($newRemark)
                     ];
 			    }
 			}else{
@@ -8216,6 +8503,7 @@ if(preg_match('/switchServer(.+)_(.+)/',$data,$match)){
 				alert('🔻خطا در ساخت کانفیگ. لطفا به مدیریت اطلاع بدید',true);
 				exit;
 			}
+			$switchToken = getNewOrderToken($sid, getPanelServerType($sid), (object)['subId' => $newArr['subId'] ?? null]);
 			$vray_link = getConnectionLink($sid, $uniqid, $protocol, $newRemark, $port, $netType, $inbound_id);
 			deleteClient($server_id, $inbound_id, $uuid, 1);
         }
@@ -8246,6 +8534,7 @@ if(preg_match('/switchServer(.+)_(.+)/',$data,$match)){
             }else{
                 $res = addUser($sid, $response['uniqid'], $response['protocol'], $response['port'], $response['expiryTime'], $newRemark, $response['volume'] / 1073741824, $response['netType'], $response['security']);
                 $vray_link = getConnectionLink($sid, $response['uniqid'], $response['protocol'], $newRemark, $response['port'], $response['netType'], $inbound_id);
+                $switchToken = getNewOrderToken($sid, getPanelServerType($sid), $res);
             }
             deleteInbound($server_id, $uuid, 1);
         }
@@ -8265,16 +8554,9 @@ if(preg_match('/switchServer(.+)_(.+)/',$data,$match)){
     $stmt->bind_param("issi", $sid, $vray_link, $newRemark, $oid);
     $stmt->execute();
     $stmt->close();
-
-    $stmt = $connection->prepare("SELECT `type` FROM `server_config` WHERE `id` = ?");
-    $stmt->bind_param("i", $sid);
-    $stmt->execute();
-    $newServerType = $stmt->get_result()->fetch_assoc()['type'];
-    $stmt->close();
-    if($newServerType == "sanaei"){
-        $newSubToken = panelApiSafeName($newRemark);
+    if(!empty($switchToken)){   // the client got a new subId on the new server
         $stmt = $connection->prepare("UPDATE `orders_list` SET `token` = ? WHERE `id` = ?");
-        $stmt->bind_param("si", $newSubToken, $oid);
+        $stmt->bind_param("si", $switchToken, $oid);
         $stmt->execute();
         $stmt->close();
     }
@@ -9462,7 +9744,7 @@ if(preg_match('/^chhangeServerType(\w+)_(\d+)/',$data,$match) && ($from_id == $a
     $keys = getServerConfigKeys($match[2]);
     editText($message_id, "☑️ مدیریت سرور ها: $cname",$keys);
 }
-if(($data == "addNewMarzbanPanel" || $data=='addNewServer') and ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(($data == "addNewMarzbanPanel" || $data=='addNewServer' || $data == "addNewXuiApiPanel") and ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
     setUser($data, 'temp');
     setUser('addserverName');
@@ -9521,6 +9803,15 @@ if(preg_match('/^addServerFlag(.*)/',$userInfo['step'], $match) and $text != $bu
 if(preg_match('/^addServerPanelUrl(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)) {
     $data = json_decode($match[1],true);
     $data['panel_url'] = $text;
+    if($userInfo['temp'] == "addNewXuiApiPanel"){
+        setUser('addServerApiToken' . json_encode($data, JSON_UNESCAPED_UNICODE));
+        sendMessage("مرحله ششم:
+▪️توکن API پنل 3X-UI را وارد کنید
+( پنل ← تنظیمات ← امنیت ← API Token ← ساخت توکن با دسترسی admin )
+
+🔒 پیام شما بعد از ارسال به صورت خودکار پاک می‌شود");
+        exit();
+    }
     if($userInfo['temp'] == "addNewMarzbanPanel"){
         $data['panel_ip'] = "/empty";
         $data['sni'] = "/empty";
@@ -9612,12 +9903,45 @@ if(preg_match('/^addServerTlsSetting(.*)/',$userInfo['step'],$match) and $text !
 
     exit();
 }
+if(preg_match('/^addServerApiToken(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)) {
+    delMessage();   // remove the message that holds the token
+    $data = json_decode($match[1], true);
+    $token = trim($text);
+    if($token == "" || strlen($token) > 100){
+        sendMessage("⚠️ توکن معتبر نیست، مجدد وارد کنید:");
+        exit();
+    }
+    sendMessage("⏳ در حال بررسی توکن ...");
+    $check = panelApiCheckLogin($data['panel_url'], PANEL_API_TOKEN_USER, $token);
+    if(!$check['success']){
+        sendMessage("⚠️ اتصال به پنل با این توکن برقرار نشد.\n\n▪️آدرس پنل ( همراه با مسیر پنل ) و دسترسی توکن ( admin ) را بررسی کنید\n\nمجدد توکن را وارد کنید:");
+        exit();
+    }
+
+    $stmt = $connection->prepare("INSERT INTO `server_info` (`title`, `ucount`, `remark`, `flag`, `active`) VALUES (?,?,?,?,1)");
+    $stmt->bind_param("siss", $data['title'], $data['ucount'], $data['remark'], $data['flag']);
+    $stmt->execute();
+    $rowId = $stmt->insert_id;
+    $stmt->close();
+
+    $apiUser = PANEL_API_TOKEN_USER;
+    $stmt = $connection->prepare("INSERT INTO `server_config` (`id`, `panel_url`, `ip`, `sni`, `header_type`, `request_header`, `response_header`, `security`, `tlsSettings`, `username`, `password`, `type`)
+                                       VALUES (?, ?, '', '', 'none', '', '', 'none', '', ?, ?, 'sanaei')");
+    $stmt->bind_param("isss", $rowId, $data['panel_url'], $apiUser, $token);
+    $stmt->execute();
+    $stmt->close();
+
+    sendMessage("✅ سرور 3X-UI با API ثبت شد.\n\n▪️حالا از ( مدیریت پلن ها ← ⚡ افزودن پلن از پنل ) فقط روز و حجم را وارد کنید و پلن ساخته می‌شود",$removeKeyboard);
+    sendMessage("☑️ مدیریت سرور ها", getServerListKeys());
+    setUser();
+    exit();
+}
 if(preg_match('/^addServerPanelUser(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)) {
     $data = json_decode($match[1],true);
     $data['panel_user'] = $text;
     setUser('addServerPanePassword' . json_encode($data, JSON_UNESCAPED_UNICODE));
     sendMessage( "مرحله هفتم: 
-▪️لطفا پسورد پنل را وارد کنید (برای 3x-ui نسخه ۳ به جای پسورد، API Token را وارد کنید؛ یوزر هر چیزی می‌تواند باشد):");
+▪️لطفا پسورد پنل را وارد کنید:");
 exit();
 }
 if(preg_match('/^addServerPanePassword(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -9715,7 +10039,7 @@ if(preg_match('/^editServerPaneUser(.*)/',$userInfo['step'],$match) && $text != 
     $data = json_decode($match[1],true);
     $data['panel_user'] = $text;
     setUser('editServerPanePassword' . json_encode($data, JSON_UNESCAPED_UNICODE));
-    sendMessage( "▪️لطفا پسورد پنل را وارد کنید (برای 3x-ui نسخه ۳ به جای پسورد، API Token را وارد کنید؛ یوزر هر چیزی می‌تواند باشد):");
+    sendMessage( "▪️لطفا پسورد پنل را وارد کنید:");
     exit();
 }
 if(preg_match('/^editServerPanePassword(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){

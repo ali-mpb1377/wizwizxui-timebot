@@ -160,7 +160,7 @@ while($payParam = $paysList->fetch_assoc()){
                             }else{
                                 $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid); 
                                 if(! $response->success){
-                                    if(strstr($response->msg, "Duplicate email")) $remark .= RandomString();
+                                    if(isDuplicateClientError($response->msg)) $remark .= RandomString();
                                     elseif(strstr($response->msg, "Port already exists")) $port = rand(1111,65000);
 
                                     $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid);
@@ -169,7 +169,7 @@ while($payParam = $paysList->fetch_assoc()){
                         }else {
                             $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid); 
                             if(! $response->success){
-                                if(strstr($response->msg, "Duplicate email")) $remark .= RandomString();
+                                if(isDuplicateClientError($response->msg)) $remark .= RandomString();
 
                                 $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid);
                             } 
@@ -214,8 +214,8 @@ while($payParam = $paysList->fetch_assoc()){
                         }
                         else{
                             $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni);
-                            $token = RandomString(30);
-                            $subLink = $botState['subLinkState']=="on"?$botUrl . "settings/subLink.php?token=" . $token:"";
+                            $token = getNewOrderToken($server_id, $serverType, $response);
+                            $subLink = $botState['subLinkState']=="on"?getOrderSubLink($server_id, $serverType, $token):"";
                             $vray_link = json_encode($vraylink);
                         }
 
@@ -245,7 +245,7 @@ while($payParam = $paysList->fetch_assoc()){
                             $pixel_Size = 11;
                             $frame_Size = 0;
                             
-                            QRcode::png($link, $file, $ecc, $pixel_Size, $frame_Size);
+                            QRcode::png(getQrContent($link, $subLink), $file, $ecc, $pixel_Size, $frame_Size);
                         	addBorderImage($file);
                         	
                 	        $backgroundImage = imagecreatefromjpeg("../settings/QRCode.jpg");
