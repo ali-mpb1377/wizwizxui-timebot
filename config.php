@@ -4083,7 +4083,7 @@ function addMarzbanUser($server_id, $remark, $volume, $days, $plan_id){
     $postFields = array(
         "inbounds" => $planInfo['inbounds'],
         "proxies" => $planInfo['proxies'],
-        "expire" => time() + (86400 * $days),
+        "expire" => $days == 0 ? 0 : time() + (86400 * $days),
         "data_limit" => $volume * 1073741824,
         "username" => urlencode($remark)
     );
@@ -4413,6 +4413,64 @@ function getOrderSubLink($server_id, $serverType, $token){
     }
     return $botUrl . "settings/subLink.php?token=" . $token;
 }
+
+/**
+ * QR contents for a new account, following the settings toggles:
+ * sub QR on -> QR of the sub link, config QR on -> QR of the config link,
+ * none of them on -> old behaviour (config QR, or sub QR when the config link is hidden).
+ */
+function getAccountQrPayloads($link, $subLink){
+    global $botState;
+    $out = [];
+    if(($botState['qrSubState'] ?? "") == "on" && $subLink != "") $out[] = $subLink;
+    if(($botState['qrConfigState'] ?? "") == "on" && $link != "") $out[] = $link;
+    if(count($out) == 0) $out[] = getQrContent($link, $subLink);
+    return array_values(array_unique(array_filter($out, function($v){ return $v != ""; })));
+}
+/**
+ * Sends the account (text + QR). When the QR can not be built or sent for any reason
+ * (missing php-gd, unwritable folder, telegram can not fetch the image ...) the text is sent
+ * anyway, so the customer always receives his links.
+ */
+function sendAccountQr($payloads, $caption, $keyboard = null, $chatId = null){
+    global $botUrl;
+    if(!is_array($payloads)) $payloads = [$payloads];
+    $first = true;
+    $anySent = false;
+    foreach($payloads as $payload){
+        $sent = false;
+        $file = null;
+        try{
+            if($payload !== "" && function_exists('imagecreatetruecolor') && file_exists(__DIR__ . "/settings/QRCode.jpg")){
+                include_once __DIR__ . '/phpqrcode/qrlib.php';
+                if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH', 540);
+                if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT', 540);
+
+                $name = RandomString() . ".png";
+                $file = __DIR__ . "/" . $name;
+                QRcode::png($payload, $file, 'L', 11, 0);
+                addBorderImage($file);
+
+                $bg = imagecreatefromjpeg(__DIR__ . "/settings/QRCode.jpg");
+                $qr = imagecreatefrompng($file);
+                imagecopy($bg, $qr, 300, 300, 0, 0, imagesx($qr), imagesy($qr));
+                imagepng($bg, $file);
+                imagedestroy($bg);
+                imagedestroy($qr);
+
+                $res = sendPhoto($botUrl . $name, $first ? $caption : "QR", $first ? $keyboard : null, "HTML", $chatId);
+                $sent = is_object($res) && !empty($res->ok);
+                if(!$sent) error_log("sendAccountQr: telegram refused the photo " . json_encode($res));
+            }
+        }catch(\Throwable $e){
+            error_log("sendAccountQr: " . $e->getMessage());
+        }
+        if($file && file_exists($file)) @unlink($file);
+        if($sent){ $first = false; $anySent = true; }
+    }
+    if(!$anySent) sendMessage($caption, $keyboard, "HTML", $chatId);
+}
+
 /** What the QR code of a new account contains: honours the "config link" toggle. */
 function getQrContent($link, $subLink){
     global $botState;

@@ -227,8 +227,8 @@ if($payType == "BUY_SUB"){
     }
 
     $date = time();
-    $expire_microdate = floor(microtime(true) * 1000) + (864000 * $days * 100);
-    $expire_date = $date + (86400 * $days);
+    $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
+    $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
     $type = $file_detail['type'];
     
 
@@ -422,25 +422,7 @@ if($payType == "BUY_SUB"){
     
             ":"");
         
-            $file = RandomString() .".png";
-            $ecc = 'L';
-            $pixel_Size = 11;
-            $frame_Size = 0;
-            
-            QRcode::png(getQrContent($link, $subLink), $file, $ecc, $pixel_Size, $frame_Size);
-        	addBorderImage($file);
-        	
-	        $backgroundImage = imagecreatefromjpeg("../settings/QRCode.jpg");
-            $qrImage = imagecreatefrompng($file);
-            
-            $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
-            imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
-            imagepng($backgroundImage, $file);
-            imagedestroy($backgroundImage);
-            imagedestroy($qrImage);
-
-        	sendPhoto($botUrl . "pay/" . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>"صفحه اصلی 🏘",'callback_data'=>"mainMenu"]]]]),"HTML", $user_id);
-            unlink($file);
+            sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>"صفحه اصلی 🏘",'callback_data'=>"mainMenu"]]]]), $user_id);
         }
         $date = time();
         
@@ -573,7 +555,7 @@ elseif($payType == "RENEW_ACCOUNT"){
 		exit;
 	}
 	$stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
-	$newExpire = $time + $days * 86400;
+	$newExpire = $time + ($days == 0 ? 36500 : $days) * 86400;
 	$stmt->bind_param("ii", $newExpire, $oid);
 	$stmt->execute();
 	$stmt->close();

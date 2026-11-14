@@ -1176,8 +1176,8 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
 
     $days = $match[2];
     $date = time();
-    $expire_microdate = floor(microtime(true) * 1000) + (864000 * $days * 100);
-    $expire_date = $date + (86400 * $days);
+    $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
+    $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
     $type = $file_detail['type'];
     $volume = $match[3];
     $protocol = $file_detail['protocol'];
@@ -1327,24 +1327,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
             if($botState['subLinkState'] == "on") $acc_text .= 
             " \n🌐 subscription : <code>$subLink</code>";
         
-            $file = RandomString() .".png";
-            
-            QRcode::png(getQrContent($link, $subLink), $file, $ecc, $pixel_Size, $frame_Size);
-        	addBorderImage($file);
-        	
-        	
-        	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
-            $qrImage = imagecreatefrompng($file);
-            
-            $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
-            imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
-            imagepng($backgroundImage, $file);
-            imagedestroy($backgroundImage);
-            imagedestroy($qrImage);
-
-
-        	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
-            unlink($file);
+            sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
         }
         $stmt->bind_param("ssiiisssisiii", $uid, $token, $fid, $server_id, $inbound_id, $remark, $uniqid, $protocol, $expire_date, $vray_link, $price, $date, $rahgozar);
         $stmt->execute();
@@ -1641,8 +1624,8 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
     }
     
     $date = time();
-    $expire_microdate = floor(microtime(true) * 1000) + (864000 * $days * 100);
-    $expire_date = $date + (86400 * $days);
+    $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
+    $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
     $type = $file_detail['type'];
     $protocol = $file_detail['protocol'];
     $price = $payInfo['price'];   
@@ -1796,25 +1779,7 @@ if($botState['subLinkState'] == "on") $acc_text .= "
         
         ";
               
-            $file = RandomString() .".png";
-            $ecc = 'L';
-            $pixel_Size = 11;
-            $frame_Size = 0;
-            
-            QRcode::png(getQrContent($link, $subLink), $file, $ecc, $pixel_Size, $frame_Size);
-        	addBorderImage($file);
-        	
-        	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
-            $qrImage = imagecreatefrompng($file);
-            
-            $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
-            imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
-            imagepng($backgroundImage, $file);
-            imagedestroy($backgroundImage);
-            imagedestroy($qrImage);
-
-        	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
-            unlink($file);
+            sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
         }
         
         $agentBought = $payInfo['agent_bought'];
@@ -1910,7 +1875,7 @@ if($botState['subLinkState'] == "on") $acc_text .= "
         	exit;
         }
         $stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
-        $newExpire = $time + $days * 86400;
+        $newExpire = $time + ($days == 0 ? 36500 : $days) * 86400;
         $stmt->bind_param("ii", $newExpire, $oid);
         $stmt->execute();
         $stmt->close();
@@ -2895,8 +2860,8 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
     $stmt->close();
 
     $date = time();
-    $expire_microdate = floor(microtime(true) * 1000) + (864000 * $days * 100);
-    $expire_date = $date + (86400 * $days);
+    $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
+    $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
     $type = $file_detail['type'];
     $protocol = $file_detail['protocol'];
     $price = $payInfo['price'];
@@ -3047,25 +3012,7 @@ if($botState['subLinkState'] == "on") $acc_text .= "
 
 🌐 subscription : <code>$subLink</code>"; 
     
-        $file = RandomString() .".png";
-        $ecc = 'L';
-        $pixel_Size = 11;
-        $frame_Size = 0;
-        
-        QRcode::png(getQrContent($link, $subLink), $file, $ecc, $pixel_Size, $frame_Size);
-    	addBorderImage($file);
-    	
-        $backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
-        $qrImage = imagecreatefrompng($file);
-        
-        $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
-        imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
-        imagepng($backgroundImage, $file);
-        imagedestroy($backgroundImage);
-        imagedestroy($qrImage);
-
-    	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
-        unlink($file);
+        sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
     }
 
     
@@ -3126,25 +3073,7 @@ if(preg_match('/^showQr(Sub|Config)(\d+)/',$data,$match)){
     define('IMAGE_HEIGHT',540);
     if($match[1] == "Sub"){
         $subLink = getOrderSubLink($order['server_id'], getPanelServerType($order['server_id']), $order['token']);
-        $file = RandomString() .".png";
-        $ecc = 'L';
-        $pixel_Size = 11;
-        $frame_Size = 0;
-        
-        QRcode::png($subLink, $file, $ecc, $pixel_Size, $frame_Size);
-    	addBorderImage($file);
-    	
-    	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
-        $qrImage = imagecreatefrompng($file);
-        
-        $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
-        imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
-        imagepng($backgroundImage, $file);
-        imagedestroy($backgroundImage);
-        imagedestroy($qrImage);
-
-    	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
-        unlink($file);
+        sendAccountQr([$subLink], $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
     }
     elseif($match[1] == "Config"){
 
@@ -3154,25 +3083,7 @@ if(preg_match('/^showQr(Sub|Config)(\d+)/',$data,$match)){
         define('IMAGE_WIDTH',540);
         define('IMAGE_HEIGHT',540);
         foreach($vraylink as $vray_link){
-            $file = RandomString() .".png";
-            $ecc = 'L';
-            $pixel_Size = 11;
-            $frame_Size = 0;
-            
-            QRcode::png($vray_link, $file, $ecc, $pixel_Size, $frame_Size);
-        	addBorderImage($file);
-            	
-        	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
-            $qrImage = imagecreatefrompng($file);
-            
-            $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
-            imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
-            imagepng($backgroundImage, $file);
-            imagedestroy($backgroundImage);
-            imagedestroy($qrImage);
-            
-        	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
-            unlink($file);
+            sendAccountQr([$vray_link], $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
         }
     }
 }
@@ -3318,8 +3229,8 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     $stmt->close();
 
     $date = time();
-    $expire_microdate = floor(microtime(true) * 1000) + (864000 * $days * 100);
-    $expire_date = $date + (86400 * $days);
+    $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
+    $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
     $type = $file_detail['type'];
     $protocol = $file_detail['protocol'];
     $price = $payInfo['price'];
@@ -3455,25 +3366,7 @@ if($botState['subLinkState'] == "on") $acc_text .= "
 
 \n🌐 subscription : <code>$subLink</code>";
     
-        $file = RandomString() .".png";
-        $ecc = 'L';
-        $pixel_Size = 11;
-        $frame_Size = 0;
-    
-        QRcode::png(getQrContent($vray_link, $subLink), $file, $ecc, $pixel_Size, $frame_Size);
-    	addBorderImage($file);
-    	
-    	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
-        $qrImage = imagecreatefrompng($file);
-        
-        $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
-        imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
-        imagepng($backgroundImage, $file);
-        imagedestroy($backgroundImage);
-        imagedestroy($qrImage);
-
-    	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
-        unlink($file);
+        sendAccountQr(getAccountQrPayloads($vray_link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
     }
     sendMessage('✅ کانفیگ و براش ارسال کردم', getMainKeys());
     
@@ -3576,8 +3469,8 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
 
     $days = $file_detail['days'];
     $date = time();
-    $expire_microdate = floor(microtime(true) * 1000) + (864000 * $days * 100);
-    $expire_date = $date + (86400 * $days);
+    $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
+    $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
     $type = $file_detail['type'];
     $volume = $file_detail['volume'];
     $protocol = $file_detail['protocol'];
@@ -3780,25 +3673,7 @@ if($botState['subLinkState'] == "on") $acc_text .= "
 
 \n🌐 subscription : <code>$subLink</code>";
             
-                $file = RandomString() .".png";
-                $ecc = 'L';
-                $pixel_Size = 11;
-                $frame_Size = 0;
-                
-                QRcode::png(getQrContent($link, $subLink), $file, $ecc, $pixel_Size, $frame_Size);
-            	addBorderImage($file);
-            	
-	        	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
-                $qrImage = imagecreatefrompng($file);
-                
-                $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
-                imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
-                imagepng($backgroundImage, $file);
-                imagedestroy($backgroundImage);
-                imagedestroy($qrImage);
-
-            	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
-                unlink($file);
+                sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
             }
             
         	$stmt = $connection->prepare("INSERT INTO `orders_list` 
@@ -4129,8 +4004,8 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
 
     $days = $file_detail['days'];
     $date = time();
-    $expire_microdate = floor(microtime(true) * 1000) + (864000 * $days * 100);
-    $expire_date = $date + (86400 * $days);
+    $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
+    $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
     $type = $file_detail['type'];
     $volume = $file_detail['volume'];
     $protocol = $file_detail['protocol'];
@@ -4311,26 +4186,7 @@ if($botState['subLinkState'] == "on") $acc_text .= "
 
 \n🌐 subscription : <code>$subLink</code>";
             
-                $file = RandomString() .".png";
-                $ecc = 'L';
-                $pixel_Size = 11;
-                $frame_Size = 0;
-            
-                QRcode::png(getQrContent($link, $subLink), $file, $ecc, $pixel_Size, $frame_Size);
-            	addBorderImage($file);
-            	
-            	
-	        	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
-                $qrImage = imagecreatefrompng($file);
-                
-                $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
-                imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
-                imagepng($backgroundImage, $file);
-                imagedestroy($backgroundImage);
-                imagedestroy($qrImage);
-
-            	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
-                unlink($file);
+                sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
             }
             $agent_bought = $payInfo['agent_bought'];
     
@@ -5622,8 +5478,8 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
 
     $days = $file_detail['days'];
     $date = time();
-    $expire_microdate = floor(microtime(true) * 1000) + (864000 * $days * 100);
-    $expire_date = $date + (86400 * $days);
+    $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
+    $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
     $type = $file_detail['type'];
     $volume = $file_detail['volume'];
     $protocol = $file_detail['protocol'];
@@ -5777,25 +5633,7 @@ if($botState['subLinkState'] == "on") $acc_text .= "
 
 \n🌐 subscription : <code>$subLink</code>";
     
-        $file = RandomString().".png";
-        $ecc = 'L'; 
-        $pixel_Size = 11;
-        $frame_Size = 0;
-        QRcode::png(getQrContent($link, $subLink), $file, $ecc, $pixel_Size, $frame_size);
-    	addBorderImage($file);
-    	
-    	
-        $backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
-        $qrImage = imagecreatefrompng($file);
-        
-        $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
-        imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
-        imagepng($backgroundImage, $file);
-        imagedestroy($backgroundImage);
-        imagedestroy($qrImage);
-
-        sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML");
-        unlink($file);
+        sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), null);
     }
 	$stmt = $connection->prepare("INSERT INTO `orders_list` 
 	    (`userid`, `token`, `transid`, `fileid`, `server_id`, `inbound_id`, `remark`, `uuid`, `protocol`, `expire_date`, `link`, `amount`, `status`, `date`, `notif`, `rahgozar`, `agent_bought`)
@@ -6394,21 +6232,7 @@ if(preg_match('/sConfigUpdate(\d+)/', $data,$match)){
         $pixel_Size = 11;
         $frame_Size = 0;
         
-        $file = RandomString() .".png";
-        QRcode::png($vray_link, $file, $ecc, $pixel_Size, $frame_Size);
-    	addBorderImage($file);
-    	
-        $backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
-        $qrImage = imagecreatefrompng($file);
-        
-        $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
-        imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
-        imagepng($backgroundImage, $file);
-        imagedestroy($backgroundImage);
-        imagedestroy($qrImage);
-
-        sendPhoto($botUrl . $file, $acc_text,null,"HTML");
-        unlink($file);
+        sendAccountQr([$vray_link], $acc_text, null, null);
     }
 }
 
@@ -6846,11 +6670,11 @@ if(preg_match('/^panelPlanServer(\d+)/',$data,$match) and ($from_id == $admin ||
 if(preg_match('/^panelPlanInbound(\d+)_(\d+)/',$data,$match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
     setUser('panelPlanDays' . json_encode(['server_id' => (int)$match[1], 'inbound_id' => (int)$match[2]]));
-    sendMessage("📅 | تعداد روز های اعتبار این پلن را وارد کنید:", $cancelKey);
+    sendMessage("📅 | تعداد روز های اعتبار این پلن را وارد کنید ( 0 = بدون محدودیت زمان ):", $cancelKey);
     exit();
 }
 if(preg_match('/^panelPlanDays(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    if(!is_numeric($text) || $text <= 0){
+    if(!is_numeric($text) || $text < 0){
         sendMessage($mainValues['send_only_number']);
         exit();
     }
@@ -6889,17 +6713,11 @@ if(preg_match('/^panelPlanPrice(.*)/',$userInfo['step'],$match) and $text != $bu
         setUser();
         exit();
     }
-    if(count($planCats) == 1){
-        // single category: use it and continue to the creation step below
-        $data = "panelPlanCat" . $planCats[0]['id'];
-        $userInfo['step'] = 'panelPlanCat' . json_encode($planData);
-    }else{
-        $keys = [];
-        foreach($planCats as $cat) $keys[] = [['text' => $cat['title'], 'callback_data' => "panelPlanCat" . $cat['id']]];
-        setUser('panelPlanCat' . json_encode($planData));
-        sendMessage("🔰 دسته پلن را انتخاب کنید:", json_encode(['inline_keyboard' => $keys]));
-        exit();
-    }
+    $keys = [];
+    foreach($planCats as $cat) $keys[] = [['text' => $cat['title'], 'callback_data' => "panelPlanCat" . $cat['id']]];
+    setUser('panelPlanCat' . json_encode($planData));
+    sendMessage("🔰 دسته پلن را انتخاب کنید:", json_encode(['inline_keyboard' => $keys]));
+    exit();
 }
 if(preg_match('/^panelPlanCat(\d+)/',$data,$match) and preg_match('/^panelPlanCat(.*)/',$userInfo['step'],$stepMatch) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $catId = (int)$match[1];
@@ -6920,7 +6738,7 @@ if(preg_match('/^panelPlanCat(\d+)/',$data,$match) and preg_match('/^panelPlanCa
     $planNet = $streamInfo->network ?? "tcp";
     $planFlow = (($streamInfo->security ?? "") == "reality" && $planNet == "tcp" && $planProtocol == "vless") ? "xtls-rprx-vision" : "None";
 
-    $planTitle = $planData['days'] . " روزه " . ($planData['volume'] == 0 ? "نامحدود" : $planData['volume'] . " گیگ");
+    $planTitle = ($planData['days'] == 0 ? "بدون محدودیت زمان" : $planData['days'] . " روزه") . " " . ($planData['volume'] == 0 ? "حجم نامحدود" : $planData['volume'] . " گیگ");
     $planDays = (float)$planData['days'];
     $planVolume = (float)$planData['volume'];
     $planCapacity = 100000;   // capacity of a shared inbound plan, decreases with every sale
@@ -6935,6 +6753,7 @@ if(preg_match('/^panelPlanCat(\d+)/',$data,$match) and preg_match('/^panelPlanCa
     $stmt->bind_param("iiiiissddsiss", $catId, $planServerId, $planInboundId, $planCapacity, $planLimitIp, $planTitle, $planProtocol, $planDays, $planVolume, $planNet, $planPrice, $planDate, $planFlow);
     $stmt->execute();
     $stmt->close();
+    delMessage();
 
     sendMessage("☑️ | پلن «$planTitle» با قیمت " . number_format($planPrice) . " تومان ساخته شد ( پروتکل $planProtocol • شبکه $planNet )", $removeKeyboard);
     sendMessage($mainValues['reached_main_menu'], getAdminKeys());
@@ -8113,7 +7932,7 @@ if(preg_match('/approveRenewAcc(.*)/',$data,$match) && ($from_id == $admin || $u
 		exit;
 	}
 	$stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
-	$newExpire = $time + $days * 86400;
+	$newExpire = $time + ($days == 0 ? 36500 : $days) * 86400;
 	$stmt->bind_param("ii", $newExpire, $oid);
 	$stmt->execute();
 	$stmt->close();
@@ -8252,7 +8071,7 @@ if(preg_match('/payRenewWithWallet(.*)/', $data,$match)){
 		exit;
 	}
 	$stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
-	$newExpire = $time + $days * 86400;
+	$newExpire = $time + ($days == 0 ? 36500 : $days) * 86400;
 	$stmt->bind_param("ii", $newExpire, $oid);
 	$stmt->execute();
 	$stmt->close();

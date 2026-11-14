@@ -108,8 +108,8 @@ if($botState['cartToCartAutoAcceptState']=="on"){
             }
             
             $date = time();
-            $expire_microdate = floor(microtime(true) * 1000) + (864000 * $days * 100);
-            $expire_date = $date + (86400 * $days);
+            $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
+            $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
             $type = $file_detail['type'];
             $protocol = $file_detail['protocol'];
             $price = $payInfo['price'];   
@@ -295,25 +295,7 @@ if($botState['cartToCartAutoAcceptState']=="on"){
                 
                 ";
                       
-                    $file = RandomString() .".png";
-                    $ecc = 'L';
-                    $pixel_Size = 11;
-                    $frame_Size = 0;
-                    
-                    QRcode::png(getQrContent($link, $subLink), $file, $ecc, $pixel_Size, $frame_Size);
-                	addBorderImage($file);
-                	
-                	$backgroundImage = imagecreatefromjpeg("QRCode.jpg");
-                    $qrImage = imagecreatefrompng($file);
-                    
-                    $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
-                    imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
-                    imagepng($backgroundImage, $file);
-                    imagedestroy($backgroundImage);
-                    imagedestroy($qrImage);
-        
-                	$res = sendPhoto($botUrl . "/settings/" . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $user_id);
-                    unlink($file);
+                    sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $user_id);
                 }
                 
                 $agentBought = $payInfo['agent_bought'];
@@ -407,7 +389,7 @@ if($botState['cartToCartAutoAcceptState']=="on"){
             	exit;
             }
             $stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
-            $newExpire = $time + $days * 86400;
+            $newExpire = $time + ($days == 0 ? 36500 : $days) * 86400;
             $stmt->bind_param("ii", $newExpire, $oid);
             $stmt->execute();
             $stmt->close();
