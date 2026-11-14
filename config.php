@@ -783,6 +783,7 @@ function getServerListKeys($offset = 0){
         ['text'=>'➕ ثبت سرور xui','callback_data'=>"addNewServer"],
         ['text'=>"➕ ثبت سرور مرزبان",'callback_data'=>"addNewMarzbanPanel"]
         ];
+    $keys[] = [['text'=>"➕ ثبت 3X-UI (فقط API توکن)",'callback_data'=>"addNewXuiApiPanel"]];
     $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
     return json_encode(['inline_keyboard'=>$keys]);
 }
@@ -1047,11 +1048,11 @@ function getBotSettingKeys(){
         ],
         [
             ['text'=>$subLink,'callback_data'=>"changeBotsubLinkState"],
-            ['text'=>"نمایش لینک ساب (از پنل) و مشخصات وب",'callback_data'=>"wizwizch"]
+            ['text'=>"لینک ساب و مشخصات وب",'callback_data'=>"wizwizch"]
         ],
         [
             ['text'=>$configLink,'callback_data'=>"changeBotconfigLinkState"],
-            ['text'=>"نمایش لینک کانفیگ",'callback_data'=>"wizwizch"]
+            ['text'=>"لینک کانفیگ",'callback_data'=>"wizwizch"]
         ],
         [
             ['text'=>$searchState,'callback_data'=>"changeBotsearchState"],
@@ -1666,11 +1667,8 @@ function getUserOrderDetailKeys($id, $offset = 0){
         $server_info = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         
-        $subLink = "";
-        if($botState['subLinkState'] == "on"){
-            $rawSubLink = accountSubLink($server_id, $serverType, $token);
-            if($rawSubLink != "") $subLink = "<code>" . $rawSubLink . "</code>";
-        }
+        if($serverType == "marzban") $subLink = $botState['subLinkState'] == "on"?"<code>" . $panelUrl . "/sub/" . $token . "</code>":"";
+        else $subLink = $botState['subLinkState']=="on"?"<code>" . getOrderSubLink($server_id, $serverType, $token) . "</code>":"";
 
         
         $enable = $enable == true? $buttonValues['active']:$buttonValues['deactive'];
@@ -1992,11 +1990,8 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
         $server_info = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         
-        $subLink = "";
-        if($botState['subLinkState'] == "on"){
-            $rawSubLink = accountSubLink($server_id, $serverType, $token);
-            if($rawSubLink != "") $subLink = "<code>" . $rawSubLink . "</code>";
-        }
+        if($serverType == "marzban") $subLink = $botState['subLinkState'] == "on"?"<code>" . $panel_url . "/sub/" . $token . "</code>":"";
+        else $subLink = $botState['subLinkState']=="on"?"<code>" . getOrderSubLink($server_id, $serverType, $token) . "</code>":"";
 
         $msg = str_replace(['STATE', 'NAME','CONNECT-LINK', 'SUB-LINK'], [$enable, $remark, $configLinks, $subLink], $mainValues['config_details_message']);
         
@@ -2040,113 +2035,6 @@ function RandomString($count = 9, $type = "all") {
         ];
     }
     return $randstring;
-}
-// Enabled inbounds of a panel that the bot can sell accounts on, with everything detected from the panel itself.
-// Returns null when the panel cannot be reached.
-function getPanelEnabledInbounds($server_id){
-    $res = getJson($server_id);
-    if(!is_object($res) || !isset($res->obj) || !is_array($res->obj)) return null;
-
-    $list = [];
-    foreach($res->obj as $row){
-        if(empty($row->enable)) continue;
-        if(!in_array($row->protocol, ['vless', 'vmess', 'trojan'])) continue;
-
-        $stream = json_decode($row->streamSettings, true);
-        $network = is_array($stream) && !empty($stream['network']) ? $stream['network'] : 'tcp';
-        $security = is_array($stream) && !empty($stream['security']) ? $stream['security'] : 'none';
-        if(!in_array($network, ['tcp', 'ws', 'grpc', 'kcp'])) continue;
-
-        $settings = json_decode($row->settings, true);
-        $clients = is_array($settings) && isset($settings['clients']) && is_array($settings['clients']) ? $settings['clients'] : [];
-        $flow = "";
-        if($row->protocol == 'vless'){
-            foreach($clients as $client){
-                if(!empty($client['flow'])){ $flow = $client['flow']; break; }
-            }
-            if($flow == "" && $security == 'reality' && $network == 'tcp') $flow = "xtls-rprx-vision";
-        }
-
-        $list[] = [
-            'id' => (int) $row->id,
-            'remark' => (string) $row->remark,
-            'protocol' => $row->protocol,
-            'network' => $network,
-            'security' => $security,
-            'port' => $row->port,
-            'flow' => $flow,
-            'clients' => count($clients),
-        ];
-    }
-    return $list;
-}
-function getPanelInboundInfo($server_id, $inbound_id){
-    $list = getPanelEnabledInbounds($server_id);
-    if(!$list) return null;
-    foreach($list as $inbound){
-        if($inbound['id'] == $inbound_id) return $inbound;
-    }
-    return null;
-}
-function getPanelInboundKeys($server_id){
-    $list = getPanelEnabledInbounds($server_id);
-    if(is_null($list)) return null;
-    $keys = [];
-    foreach($list as $inbound){
-        $name = $inbound['remark'] != "" ? $inbound['remark'] : "inbound " . $inbound['id'];
-        $text = "$name • {$inbound['protocol']}/{$inbound['network']}/{$inbound['security']} • {$inbound['port']} • 👥" . $inbound['clients'];
-        $keys[] = [['text' => $text, 'callback_data' => "selectPlanInbound" . $inbound['id']]];
-    }
-    return $keys;
-}
-function isDuplicateAccountError($response){
-    $msg = (is_object($response) && isset($response->msg)) ? (string) $response->msg : "";
-    return stripos($msg, "Duplicate email") !== false || stripos($msg, "already in use") !== false;
-}
-// Value stored in orders_list.token: the panel subId (= account name) for 3x-ui, a random token otherwise.
-function accountToken($serverType, $remark){
-    return $serverType == "sanaei" ? panelApiSafeName($remark) : RandomString(30);
-}
-// Subscription link of an account: taken from the 3x-ui panel; other panel types keep the bot's own sub page.
-function accountSubLink($server_id, $serverType, $token){
-    global $botUrl;
-    if($serverType == "marzban"){
-        $srv = panelApiServer($server_id);
-        return $srv ? rtrim($srv['panel_url'], '/') . "/sub/" . $token : "";
-    }
-    if($serverType == "sanaei" && !preg_match('/^[A-Za-z0-9]{30}$/', (string) $token)){
-        return getPanelSubLink($server_id, $token);
-    }
-    return $botUrl . "settings/subLink.php?token=" . $token;
-}
-// What the QR code of a delivered account should contain: the config link, or the sub link when configs are hidden.
-function accountQrData($configData, $subLink = ""){
-    global $botState;
-    return (($botState['configLinkState'] ?? "on") != "off") ? $configData : $subLink;
-}
-function sendAccountPhoto($qrData, $caption, $replyMarkup = null, $chatId = null){
-    global $botUrl;
-    if($qrData === "" || $qrData === null){
-        if(trim((string) $caption) !== "") sendMessage($caption, $replyMarkup, "HTML", $chatId);
-        return;
-    }
-    include_once __DIR__ . '/phpqrcode/qrlib.php';
-    if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH', 540);
-    if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT', 540);
-    $file = RandomString() . ".png";
-    QRcode::png($qrData, $file, 'L', 11, 0);
-    addBorderImage($file);
-
-    $backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
-    $qrImage = imagecreatefrompng($file);
-    $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
-    imagecopy($backgroundImage, $qrImage, 300, 300, 0, 0, $qrSize['width'], $qrSize['height']);
-    imagepng($backgroundImage, $file);
-    imagedestroy($backgroundImage);
-    imagedestroy($qrImage);
-
-    sendPhoto($botUrl . $file, $caption, $replyMarkup, "HTML", $chatId);
-    unlink($file);
 }
 function generateUID(){
     $randomString = openssl_random_pseudo_bytes(16);
@@ -2214,7 +2102,7 @@ function setUser($value = 'none', $field = 'step'){
     $stmt->close();
 }
 function generateRandomString($length, $protocol) {
-    return ($protocol == 'trojan') ? substr(bin2hex(random_bytes(16)), 0, 15) : generateUID(); // md5(time()) repeated within the same second
+    return ($protocol == 'trojan') ? substr(md5(time()),5,15) : generateUID();
 }
 function addBorderImage($add){
     $border = 30;
@@ -2291,7 +2179,7 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
         'streamSettings' => $row->streamSettings, 'sniffing' => $row->sniffing);
 
         if($serverType == "sanaei" || $serverType == "alireza"){
-            $response = panelApi($server_id, 'delClient', ['id' => $inbound_id, 'clientId' => $uuid, 'email' => isset($email) ? $email : null]);
+            $response = panelApi($server_id, 'delClient', ['id' => $inbound_id, 'clientId' => $uuid]);
         }else{
             $response = panelApi($server_id, 'updateInbound', ['id' => $inbound_id], $dataArr);
         }
@@ -2661,7 +2549,7 @@ function editClientRemark($server_id, $inbound_id, $uuid, $newRemark){
             "id"=>$inbound_id,
             "settings" => $newSetting
             );
-        $response = panelApi($server_id, 'updateClient', ['clientId' => $uuid, 'email' => isset($email) ? $email : null], $dataArr);
+        $response = panelApi($server_id, 'updateClient', ['clientId' => $uuid], $dataArr);
     }else{
         $response = panelApi($server_id, 'updateInbound', ['id' => $inbound_id], $dataArr);
     }
@@ -2744,7 +2632,7 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
             "id"=>$inbound_id,
             "settings" => $newSetting
             );
-        $response = panelApi($server_id, 'updateClient', ['clientId' => $uuid, 'email' => isset($email) ? $email : null], $dataArr);
+        $response = panelApi($server_id, 'updateClient', ['clientId' => $uuid], $dataArr);
     }else{
         $response = panelApi($server_id, 'updateInbound', ['id' => $inbound_id], $dataArr);
     }
@@ -2836,7 +2724,6 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
     $response = getJson($server_id);
     if(!$response) return null;
     $response = $response->obj;
-    $iid = null;
     foreach($response as $row){
         if($row->id == $inbound_id) {
             $iid = $row->id;
@@ -2846,38 +2733,45 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
     }
     if(!intval($iid)) return "inbound not Found";
 
+    // a REALITY inbound needs the plan's flow even when the server flag was never set (API token servers)
+    $streamInfo = json_decode($row->streamSettings);
+    if(is_object($streamInfo) && ($streamInfo->security ?? '') == "reality") $reality = "true";
+
     $settings = json_decode($row->settings, true);
     $id_label = $protocol == 'trojan' ? 'password' : 'id';
+    $subId = makeSubId($remark);  // subId = email (username)
     if($newarr == ''){
 		if($serverType == "sanaei" || $serverType == "alireza"){
-		    // flow is detected from the inbound itself: the plan's flow, else the one existing clients already use
-		    $flow = "";
-		    if($protocol == 'vless'){
-		        if($planId){
-		            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=?");
-		            $stmt->bind_param("i", $planId);
-		            $stmt->execute();
-		            $file_detail = $stmt->get_result()->fetch_assoc();
-		            $stmt->close();
-		            if(isset($file_detail['flow']) && $file_detail['flow'] != "None") $flow = $file_detail['flow'];
-		        }
-		        if($flow == "" && isset($settings['clients']) && is_array($settings['clients'])){
-		            foreach($settings['clients'] as $existingClient){
-		                if(!empty($existingClient['flow'])){ $flow = $existingClient['flow']; break; }
-		            }
-		        }
+		    if($reality == "true"){
+                $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=?");
+                $stmt->bind_param("i", $planId);
+                $stmt->execute();
+                $file_detail = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+            
+                $flow = isset($file_detail['flow']) && $file_detail['flow'] != "None" ? $file_detail['flow'] : "";
+                
+                $newClient = [
+                    "$id_label" => $client_id,
+                    "enable" => true,
+                    "email" => $remark,
+                    "limitIp" => $limitip,
+                    "flow" => $flow,
+                    "totalGB" => $volume,
+                    "expiryTime" => $expiryTime,
+                    "subId" => $subId
+                ];
+		    }else{
+                $newClient = [
+                    "$id_label" => $client_id,
+                    "enable" => true,
+                    "email" => $remark,
+                    "limitIp" => $limitip,
+                    "totalGB" => $volume,
+                    "expiryTime" => $expiryTime,
+                    "subId" => $subId
+                ];
 		    }
-
-		    $newClient = [
-		        "$id_label" => $client_id,
-		        "enable" => true,
-		        "email" => $remark,
-		        "limitIp" => $limitip,
-		        "totalGB" => $volume,
-		        "expiryTime" => $expiryTime,
-		        "subId" => panelApiSafeName($remark)
-		    ];
-		    if($protocol == 'vless') $newClient['flow'] = $flow;
     	}else{
             $newClient = [
                 "$id_label" => $client_id,
@@ -2909,6 +2803,8 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
             "settings" => $newSetting
             );
         $response = panelApi($server_id, 'addClient', [], $dataArr);
+        // the subId the panel now holds for this client (used to read the panel's own sub link)
+        if(is_object($response) && $newarr == '') $response->subId = $subId;
     }else{
         $response = panelApi($server_id, 'updateInbound', ['id' => $iid], $dataArr);
     }
@@ -3617,10 +3513,12 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
             $remark = $row->remark;
             $streamSettings = $row->streamSettings;
             $settings = $row->settings;
+            $oldSubId = $clients[0]->subId ?? "";   // keep the client's subId: the sub link must not change
             break;
         }
     }
     if(!intval($iid)) return;
+    if(empty($oldSubId)) $oldSubId = makeSubId($remark);
 
     $headers = getNewHeaders($netType, $request_header, $response_header, $header_type);
     $headers = empty($headers)?"{}":$headers;
@@ -3655,7 +3553,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
                   "limitIp": 0,
                   "totalGB": 0,
                   "expiryTime": 0,
-                  "subId": "' . panelApiSafeName($remark) . '"
+                  "subId": "' . $oldSubId . '"
         		}
         	  ],
         	  "decryption": "none",
@@ -3734,7 +3632,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
               "limitIp": 0,
               "totalGB": 0,
               "expiryTime": 0,
-              "subId": "' . panelApiSafeName($remark) . '"
+              "subId": "' . $oldSubId . '"
 			}
 		  ],
 		  "fallbacks": []
@@ -3822,7 +3720,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
                       "limitIp": 0,
                       "totalGB": 0,
                       "expiryTime": 0
-                      "subId": "' . panelApiSafeName($remark) . '"
+                      "subId": "' . $oldSubId . '"
             		}
             	  ],
             	  "decryption": "none",
@@ -3871,7 +3769,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
                       "limitIp": 0,
                       "totalGB": 0,
                       "expiryTime": 0,
-                      "subId": "' . panelApiSafeName($remark) . '"
+                      "subId": "' . $oldSubId . '"
                     }
                   ],
                   "decryption": "none",
@@ -3918,7 +3816,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
                       "limitIp": 0,
                       "totalGB": 0,
                       "expiryTime": 0,
-                      "subId": "' . panelApiSafeName($remark) . '"
+                      "subId": "' . $oldSubId . '"
                     }
                   ],
                   "decryption": "none",
@@ -3964,7 +3862,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
                       "limitIp": 0,
                       "totalGB": 0,
                       "expiryTime": 0,
-                      "subId": "' . panelApiSafeName($remark) . '"
+                      "subId": "' . $oldSubId . '"
             		}
             	  ],
             	  "decryption": "none",
@@ -4454,6 +4352,74 @@ function getJson($server_id){
 
     return panelApi($server_id, 'list');
 }
+
+/* ------------------------------------------------------------------
+ * Panel subscription link (3x-ui / sanaei)
+ * The sub link is no longer built with the bot's domain, it comes from the
+ * panel itself: <panel subURI> + <client subId>.
+ * Orders store the panel subId in orders_list.token. Old orders keep a
+ * 30 character token and keep using settings/subLink.php.
+ * ------------------------------------------------------------------ */
+function getPanelSubBase($server_id){
+    static $cache = [];
+    if(array_key_exists($server_id, $cache)) return $cache[$server_id];
+
+    $base = null;
+    $res = panelApi($server_id, 'defaultSettings');
+    if(!is_object($res) || empty($res->success) || !isset($res->obj) || !is_object($res->obj)){
+        $res = panelApi($server_id, 'defaultSettingsLegacy');   // older 3x-ui keeps it under /panel/setting
+    }
+    if(is_object($res) && !empty($res->success) && isset($res->obj) && is_object($res->obj)){
+        if(!empty($res->obj->subEnable) && !empty($res->obj->subURI)){
+            $base = rtrim($res->obj->subURI, '/') . '/';
+        }
+    }
+    return $cache[$server_id] = $base;
+}
+function getPanelServerType($server_id){
+    static $cache = [];
+    if(isset($cache[$server_id])) return $cache[$server_id];
+    global $connection;
+    $stmt = $connection->prepare("SELECT `type` FROM `server_config` WHERE `id`=?");
+    $stmt->bind_param("i", $server_id);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $cache[$server_id] = ($row['type'] ?? null);
+}
+
+/** subId of a new client = its email (the username / generated name), kept URL safe. */
+function makeSubId($remark){
+    $id = preg_replace('/[^A-Za-z0-9_\-]/', '', (string)$remark);
+    return strlen($id) >= 3 ? substr($id, 0, 64) : RandomString(16);
+}
+/** true when the panel refused a new client because email / subId already exists (old and new 3x-ui wording) */
+function isDuplicateClientError($msg){
+    return is_string($msg) && (stripos($msg, "Duplicate email") !== false || stripos($msg, "already in use") !== false || stripos($msg, "Duplicate subId") !== false);
+}
+/** Token to store in orders_list for a new account: the panel subId when possible, else the legacy random token. */
+function getNewOrderToken($server_id, $serverType, $response = null){
+    if($serverType == "sanaei" && is_object($response) && !empty($response->subId) && getPanelSubBase($server_id)){
+        return $response->subId;
+    }
+    return RandomString(30);
+}
+/** Full subscription link of an order (plain text, without <code>). */
+function getOrderSubLink($server_id, $serverType, $token){
+    global $botUrl;
+    if($serverType == "sanaei" && strlen($token) != 30){
+        $base = getPanelSubBase($server_id);
+        if($base) return $base . $token;
+    }
+    return $botUrl . "settings/subLink.php?token=" . $token;
+}
+/** What the QR code of a new account contains: honours the "config link" toggle. */
+function getQrContent($link, $subLink){
+    global $botState;
+    if(($botState['configLinkState'] ?? "") != "off" || $subLink == "") return $link;
+    return $subLink;
+}
+
 function getNewCert($server_id){
     global $connection;
     $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
@@ -4468,6 +4434,7 @@ function getNewCert($server_id){
 }
 function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark, $volume, $netType, $security = 'none', $rahgozar = false, $planId = null){
     global $connection;
+    $subId = makeSubId($remark);  // subId = email (username)
     $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
     $stmt->bind_param("i", $server_id);
     $stmt->execute();
@@ -4526,7 +4493,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
                   "limitIp": 0,
                   "totalGB": 0,
                   "expiryTime": 0,
-                  "subId": "' . panelApiSafeName($remark) . '"
+                  "subId": "' . $subId . '"
         		}
         	  ],
         	  "decryption": "none",
@@ -4604,7 +4571,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
               "limitIp": 0,
               "totalGB": 0,
               "expiryTime": 0,
-              "subId": "' . panelApiSafeName($remark) . '"
+              "subId": "' . $subId . '"
 			}
 		  ],
 		  "fallbacks": []
@@ -4701,7 +4668,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
                   "limitIp": 0,
                   "totalGB": 0,
                   "expiryTime": 0,
-                  "subId": "' . panelApiSafeName($remark) . '"
+                  "subId": "' . $subId . '"
         		}
         	  ],
         	  "decryption": "none",
@@ -4749,7 +4716,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
                   "limitIp": 0,
                   "totalGB": 0,
                   "expiryTime": 0,
-                  "subId": "' . panelApiSafeName($remark) . '"
+                  "subId": "' . $subId . '"
                 }
               ],
               "disableInsecureEncryption": false
@@ -4818,7 +4785,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
                   "limitIp": 0,
                   "totalGB": 0,
                   "expiryTime": 0,
-                  "subId": "' . panelApiSafeName($remark) . '"
+                  "subId": "' . $subId . '"
         		}
         	  ],
         	  "decryption": "none",
@@ -4933,7 +4900,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
                           "limitIp": 0,
                           "totalGB": 0,
                           "expiryTime": 0,
-                          "subId": "' . panelApiSafeName($remark) . '"
+                          "subId": "' . $subId . '"
         				}
         			  ],
         			  "decryption": "none",
@@ -4950,7 +4917,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
                           "limitIp": 0,
                           "totalGB": 0,
                           "expiryTime": 0,
-                          "subId": "' . panelApiSafeName($remark) . '"
+                          "subId": "' . $subId . '"
         				}
         			  ],
         			  "decryption": "none",
@@ -5037,6 +5004,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
     
     $phost = str_ireplace('https://','',str_ireplace('http://','',$panel_url));
     $response = panelApi($server_id, 'addInbound', [], $dataArr);
+    if(is_object($response)) $response->subId = $subId;
     return $response;
 }
 

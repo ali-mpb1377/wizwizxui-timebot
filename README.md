@@ -56,14 +56,10 @@ All bot -> panel communication goes through one layer, `panelapi.php` (`panelApi
 
 | Panel type | API used |
 | --- | --- |
-| Sanaei (3x-ui v3) | Bearer API token (put the token in the panel password field), `/panel/api/inbounds/*` and `/panel/api/clients/*` |
+| Sanaei (3x-ui) | `/panel/api/inbounds/*` |
 | Alireza (x-ui) | `/xui/API/inbounds/*` |
 | Marzban | REST + Bearer token (unchanged) |
 | Normal (vaxilu / Niduka) | no public API exists, panel routes `/xui/inbound/*` are used |
-
-For 3x-ui v3 the account name chosen at purchase (typed by the user or random) is stored as the client's `subId`, and the bot shows the subscription link built by the panel (`subURI` from the panel settings + `subId`). Enable the subscription service in the panel first. In the bot settings, "show sub link" and "show config link" can be switched on/off independently.
-
-Plans: the admin picks one of the panel's enabled inbounds from a list (protocol, network, security and flow are read from the panel) and buyers are attached to that inbound as clients.
 
 Based on [wizwizdev/wizwizxui-timebot](https://github.com/wizwizdev/wizwizxui-timebot) (MIT).
 

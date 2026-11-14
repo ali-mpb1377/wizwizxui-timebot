@@ -2,22 +2,23 @@
 /**
  * panelapi.php
  *
- * Single API layer between the bot and the panels. Every call from the bot to
- * a panel goes through panelApi().
+ * Single API layer between the bot and the x-ui family of panels.
+ * Every call from the bot to a panel goes through panelApi(), so routes,
+ * authentication, timeouts and error handling live in one place.
  *
  * Panel types (server_config.type):
- *   sanaei  -> 3x-ui v3 (tested against the 3.11.0 source).
- *              Auth: API token sent as "Authorization: Bearer <token>".
- *              The token is stored in server_config.password; username is ignored
- *              (put anything, e.g. "token"). Bearer requests skip CSRF.
- *              Inbounds: /panel/api/inbounds/*   Clients: /panel/api/clients/* (by email, JSON)
- *   alireza -> alireza x-ui  (/xui/API/inbounds, cookie login)
- *   normal  -> vaxilu / niduka x-ui (/xui/inbound, cookie login, no public API)
- *   marzban -> REST + Bearer token (see the *Marzban* functions)
+ *   sanaei  -> 3x-ui           API base: /panel/api/inbounds
+ *   alireza -> alireza x-ui    API base: /xui/API/inbounds
+ *   normal  -> vaxilu / niduka x-ui. These panels ship no public API, so the
+ *              panel's own /xui/inbound/* routes are used (same as before).
+ *   marzban -> already REST + Bearer token (see the *Marzban* functions)
  */
 
 if(!defined('PANEL_API_LOGIN_TIMEOUT')) define('PANEL_API_LOGIN_TIMEOUT', 3);
 if(!defined('PANEL_API_TIMEOUT')) define('PANEL_API_TIMEOUT', 15);
+// A server saved with this username uses a 3x-ui API token (Settings -> Security -> API Token) stored in `password`.
+// Bearer-token requests need no login and no csrf token.
+if(!defined('PANEL_API_TOKEN_USER')) define('PANEL_API_TOKEN_USER', 'api-token');
 
 function panelApiServer($server_id){
     global $connection;
@@ -42,10 +43,9 @@ function panelApiPrefix($type){
 
 /**
  * Low level HTTP call. Returns ['body' => string|false, 'header' => string, 'error' => string].
- * $fields: array (multipart), string (raw body, e.g. JSON) or null.
- * $extraHeaders: list of 'Name: value' strings (Cookie, Authorization, Content-Type).
+ * $fields: array (multipart), string (raw body) or null.
  */
-function panelApiHttp($method, $url, $fields = null, $extraHeaders = [], $timeout = PANEL_API_TIMEOUT, $connectTimeout = 15, $needHeader = false){
+function panelApiHttp($method, $url, $fields = null, $cookie = null, $timeout = PANEL_API_TIMEOUT, $connectTimeout = 15, $needHeader = false, $csrf = null, $extraHeaders = []){
     $curl = curl_init();
     $headers = [
         'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:108.0) Gecko/20100101 Firefox/108.0',
@@ -53,6 +53,8 @@ function panelApiHttp($method, $url, $fields = null, $extraHeaders = [], $timeou
         'Accept-Language: en-US,en;q=0.5',
         'X-Requested-With: XMLHttpRequest',
     ];
+    if($cookie) $headers[] = 'Cookie: ' . $cookie;
+    if($csrf) $headers[] = 'X-CSRF-Token: ' . $csrf;
     foreach($extraHeaders as $h) $headers[] = $h;
 
     curl_setopt_array($curl, [
@@ -92,57 +94,95 @@ function panelApiHttp($method, $url, $fields = null, $extraHeaders = [], $timeou
 }
 
 /**
+ * Merges the Set-Cookie headers of a response into a cookie string
+ * (same cookie name = newest value wins).
+ */
+function panelApiMergeCookies($cookie, $header){
+    $jar = [];
+    if($cookie){
+        foreach(explode(';', $cookie) as $item){
+            $item = trim($item);
+            if($item === '' || strpos($item, '=') === false) continue;
+            list($k, $v) = explode('=', $item, 2);
+            $jar[$k] = $v;
+        }
+    }
+    preg_match_all('/^Set-Cookie:\s*([^;\r\n]*)/mi', (string)$header, $matches);
+    foreach($matches[1] as $item){
+        $item = trim($item);
+        if($item === '' || strpos($item, '=') === false) continue;
+        list($k, $v) = explode('=', $item, 2);
+        $jar[$k] = $v;
+    }
+    $out = [];
+    foreach($jar as $k => $v) $out[] = $k . '=' . $v;
+    return implode('; ', $out);
+}
+
+/**
+ * Newer 3x-ui versions protect every POST (login included) with a CSRF token:
+ * GET <panel>/csrf-token -> {"success":true,"obj":"<token>"}; the token must come
+ * back in the X-CSRF-Token header together with the session cookie.
+ * Older panels have no such route: this returns [null, $cookie] and nothing changes for them.
+ */
+function panelApiFetchCsrf($panel_url, $cookie, $timeout){
+    $res = panelApiHttp('GET', rtrim($panel_url, '/') . '/csrf-token', null, $cookie, $timeout, $timeout, true);
+    $json = is_string($res['body']) ? json_decode($res['body'], true) : null;
+    if(is_array($json) && !empty($json['success']) && isset($json['obj']) && is_string($json['obj']) && $json['obj'] !== ''){
+        return [$json['obj'], panelApiMergeCookies($cookie, $res['header'])];
+    }
+    return [null, $cookie];
+}
+
+/**
  * Logs in to an x-ui panel and returns
- * ['ok' => bool, 'cookie' => string|null, 'response' => array|null]
+ * ['ok' => bool, 'cookie' => string|null, 'csrf' => string|null, 'response' => array|null]
  * 'response' is the decoded login reply (null when the panel is unreachable).
+ * 'csrf' is only set for panels that require a CSRF token (3x-ui v3+).
  */
 function panelApiLogin($panel_url, $username, $password, $timeout = PANEL_API_LOGIN_TIMEOUT){
+    $base = rtrim($panel_url, '/');
+
+    // API token mode: nothing to log in to
+    if($username === PANEL_API_TOKEN_USER){
+        return ['ok' => true, 'cookie' => null, 'csrf' => null, 'token' => $password, 'response' => null];
+    }
+
+    // 1) anonymous session + csrf token (needed by POST /login on new panels)
+    list($csrf, $cookie) = panelApiFetchCsrf($base, null, $timeout);
+
+    // 2) login
     $res = panelApiHttp(
         'POST',
-        rtrim($panel_url, '/') . '/login',
+        $base . '/login',
         http_build_query(['username' => $username, 'password' => $password]),
-        [],
+        $cookie,
         $timeout,
         $timeout,
-        true
+        true,
+        $csrf
     );
 
     $loginResponse = is_string($res['body']) ? json_decode($res['body'], true) : null;
     if(!is_array($loginResponse) || empty($loginResponse['success'])){
-        return ['ok' => false, 'cookie' => null, 'response' => is_array($loginResponse) ? $loginResponse : null];
+        return ['ok' => false, 'cookie' => null, 'csrf' => null, 'response' => is_array($loginResponse) ? $loginResponse : null];
     }
 
-    preg_match_all('/^Set-Cookie:\s*([^;]*)/mi', $res['header'], $matches);
-    $cookies = [];
-    foreach($matches[1] as $item){
-        $cookies[] = trim($item);
+    // the panel starts a fresh session on login: take the new cookie
+    $cookie = panelApiMergeCookies($cookie, $res['header']);
+    if($cookie === '') return ['ok' => false, 'cookie' => null, 'csrf' => null, 'response' => $loginResponse];
+
+    // 3) the old csrf token died with the anonymous session: ask for the one of the logged in session
+    if($csrf !== null){
+        list($csrf, $cookie) = panelApiFetchCsrf($base, $cookie, $timeout);
     }
-    if(!$cookies) return ['ok' => false, 'cookie' => null, 'response' => $loginResponse];
 
-    return ['ok' => true, 'cookie' => implode('; ', $cookies), 'response' => $loginResponse];
-}
-
-/**
- * 3x-ui v3 token check: the token is sent as a Bearer header, no login and no CSRF.
- * Returns true when the panel accepts the token on the inbound list.
- */
-function panelApiBearerOk($panel_url, $token){
-    $res = panelApiHttp(
-        'GET',
-        rtrim($panel_url, '/') . '/panel/api/inbounds/list',
-        null,
-        ['Authorization: Bearer ' . $token],
-        PANEL_API_TIMEOUT,
-        PANEL_API_LOGIN_TIMEOUT
-    );
-    $decoded = is_string($res['body']) ? json_decode($res['body'], true) : null;
-    return is_array($decoded) && !empty($decoded['success']);
+    return ['ok' => true, 'cookie' => $cookie, 'csrf' => $csrf, 'response' => $loginResponse];
 }
 
 /**
  * Checks panel credentials before they are stored (used when an admin adds or
- * edits a server). For 3x-ui v3 the "password" is the API token.
- * $type null = unknown yet: try the token first, then the legacy cookie login.
+ * edits a server). Works for Marzban (token API) and the x-ui panels.
  * Returns an array that always has the key 'success'.
  */
 function panelApiCheckLogin($panel_url, $username, $password, $type = null){
@@ -151,7 +191,7 @@ function panelApiCheckLogin($panel_url, $username, $password, $type = null){
             'POST',
             rtrim($panel_url, '/') . '/api/admin/token',
             http_build_query(['username' => $username, 'password' => $password]),
-            [],
+            null,
             PANEL_API_LOGIN_TIMEOUT,
             PANEL_API_LOGIN_TIMEOUT
         );
@@ -160,136 +200,124 @@ function panelApiCheckLogin($panel_url, $username, $password, $type = null){
         return ['success' => isset($decoded['access_token'])];
     }
 
-    if($type == null || $type == "sanaei"){
-        if(panelApiBearerOk($panel_url, $password)) return ['success' => true];
-        if($type == "sanaei") return ['success' => false];
+    if($username === PANEL_API_TOKEN_USER){
+        // verify the token with a cheap authenticated call
+        $res = panelApiHttp('GET', rtrim($panel_url, '/') . '/panel/api/server/status', null, null, PANEL_API_TIMEOUT, PANEL_API_LOGIN_TIMEOUT, false, null, ['Authorization: Bearer ' . $password]);
+        if($res['error']) return ['success' => false, 'error' => $res['error']];
+        $decoded = json_decode((string)$res['body'], true);
+        return ['success' => is_array($decoded) && !empty($decoded['success'])];
     }
 
     $login = panelApiLogin($panel_url, $username, $password, PANEL_API_TIMEOUT);
     return ['success' => $login['ok']];
 }
 
-/**
- * Auth once per request. Returns ['ok', 'headers' => [...], 'response' => array|null].
- * sanaei: Bearer token (no network call). Others: cookie login.
- */
+/** Login once per request and reuse the session for every following call. */
 function panelApiSession($server_info){
     static $sessions = [];
     $key = $server_info['id'];
-    if(isset($sessions[$key])) return $sessions[$key];
-
-    if($server_info['type'] == "sanaei"){
-        $sessions[$key] = ['ok' => true, 'headers' => ['Authorization: Bearer ' . $server_info['password']], 'response' => null];
-    }else{
-        $login = panelApiLogin($server_info['panel_url'], $server_info['username'], $server_info['password']);
-        $sessions[$key] = [
-            'ok' => $login['ok'],
-            'headers' => $login['ok'] ? ['Cookie: ' . $login['cookie']] : [],
-            'response' => $login['response'],
-        ];
+    if(!isset($sessions[$key])){
+        $sessions[$key] = panelApiLogin($server_info['panel_url'], $server_info['username'], $server_info['password']);
     }
     return $sessions[$key];
 }
 
-/** Casts the numeric/boolean client fields so Go's strict JSON decoder accepts them. */
-function panelApiNormalizeClient($client){
-    foreach(['totalGB', 'expiryTime', 'limitIp', 'tgId', 'reset'] as $k){
-        if(isset($client[$k])) $client[$k] = (int) $client[$k];
-    }
-    if(isset($client['enable'])) $client['enable'] = filter_var($client['enable'], FILTER_VALIDATE_BOOLEAN);
-    return $client;
-}
+/**
+ * Maps an operation to [HTTP method, path].
+ * Returns null when the panel type does not support the operation.
+ */
+function panelApiRoute($type, $op, $p){
+    $base = panelApiPrefix($type);
+    $api = ($type == "sanaei" || $type == "alireza");
+    $enc = function($v){ return rawurlencode((string)$v); };
 
-/** First client of a form field "settings" ({"clients":[{...}]}) as an array. */
-function panelApiClientFromSettings($data){
-    $settings = isset($data['settings']) ? json_decode($data['settings'], true) : null;
-    return isset($settings['clients'][0]) ? panelApiNormalizeClient($settings['clients'][0]) : null;
-}
-
-/** 3x-ui v3 addresses clients by email: find it from the client uuid/password. */
-function panelApiResolveEmail($server_id, $inboundId, $clientId){
-    $list = panelApi($server_id, 'list');
-    if(!is_object($list) || !isset($list->obj) || !is_array($list->obj)) return null;
-    foreach($list->obj as $row){
-        if($inboundId !== null && $inboundId !== '' && $row->id != $inboundId) continue;
-        $settings = json_decode($row->settings, true);
-        if(!isset($settings['clients'])) continue;
-        foreach($settings['clients'] as $client){
-            if((isset($client['id']) && $client['id'] == $clientId) || (isset($client['password']) && $client['password'] == $clientId)){
-                return $client['email'];
+    switch($op){
+        case 'list':
+            if($type == "sanaei") return ['GET', $base . '/list'];
+            if($type == "alireza") return ['GET', $base . '/list'];
+            return ['POST', $base . '/list'];
+        case 'addInbound':
+            return ['POST', $base . '/add'];
+        case 'updateInbound':
+            return ['POST', $base . '/update/' . $enc($p['id'])];
+        case 'delInbound':
+            return ['POST', $base . '/del/' . $enc($p['id'])];
+        case 'addClient':
+            if(!$api) return null;
+            return ['POST', $base . ($type == "alireza" ? '/addClient/' : '/addClient')];
+        case 'updateClient':
+            if(!$api) return null;
+            return ['POST', $base . '/updateClient/' . $enc($p['clientId'])];
+        case 'delClient':
+            if(!$api) return null;
+            return ['POST', $base . '/' . $enc($p['id']) . '/delClient/' . $enc($p['clientId'])];
+        case 'resetClientTraffic':
+            if($type != "sanaei" && (!isset($p['id']) || $p['id'] === '')){
+                return ['POST', $base . '/resetClientTraffic/' . $enc($p['email'])];
             }
-        }
+            return ['POST', $base . '/' . $enc($p['id']) . '/resetClientTraffic/' . $enc($p['email'])];
+        case 'clearClientIps':
+            return ['POST', $base . '/clearClientIps/' . $enc($p['email'])];
+        case 'newX25519Cert':
+            return ['POST', '/server/getNewX25519Cert'];
+        case 'clientLinks':
+            if($type != "sanaei" || empty($p['email'])) return null;
+            return ['GET', '/panel/api/clients/links/' . $enc($p['email'])];
+        case 'defaultSettings':
+            // 3x-ui only: returns subEnable / subURI (the panel's own subscription base url)
+            if($type != "sanaei") return null;
+            return ['POST', '/panel/api/setting/defaultSettings'];   // 3x-ui v3+
+        case 'defaultSettingsLegacy':
+            if($type != "sanaei") return null;
+            return ['POST', '/panel/setting/defaultSettings'];       // older 3x-ui
     }
     return null;
 }
 
 /**
- * Maps an operation to [HTTP method, path, body, extra headers].
- * Returns null when the panel type does not support the operation.
+ * 3x-ui v3+ moved the per-client calls from /panel/api/inbounds/* to /panel/api/clients/*
+ * (JSON body, clients addressed by email). This maps the calls the bot needs for
+ * selling accounts (add / update / delete / reset traffic / clear ips). Returns [method, path, jsonBody|null] or null when there is no mapping.
  */
-function panelApiRoute($type, $op, $p, $data, $server_id = null){
-    $enc = function($v){ return rawurlencode((string)$v); };
-    $json = ['Content-Type: application/json'];
-
-    if($type == "sanaei"){
-        $base = '/panel/api/inbounds';
-        $clients = '/panel/api/clients';
-        switch($op){
-            case 'list':          return ['GET', $base . '/list', null, []];
-            case 'addInbound':    return ['POST', $base . '/add', $data, []];
-            case 'updateInbound': return ['POST', $base . '/update/' . $enc($p['id']), $data, []];
-            case 'delInbound':    return ['POST', $base . '/del/' . $enc($p['id']), null, []];
-            case 'addClient':
-                $client = panelApiClientFromSettings($data);
-                if(!$client) return null;
-                return ['POST', $clients . '/add', json_encode(['client' => $client, 'inboundIds' => [(int)$data['id']]]), $json];
-            case 'updateClient':
-                $client = panelApiClientFromSettings($data);
-                if(!$client) return null;
-                // An empty flow would wipe the per-inbound flow; omitted keys are kept by the panel.
-                if(isset($client['flow']) && $client['flow'] === '') unset($client['flow']);
-                $email = !empty($p['email']) ? $p['email'] : panelApiResolveEmail($server_id, isset($data['id']) ? $data['id'] : null, $p['clientId']);
-                if(!$email) return null;
-                return ['POST', $clients . '/update/' . $enc($email), json_encode($client), $json];
-            case 'delClient':
-                $email = !empty($p['email']) ? $p['email'] : panelApiResolveEmail($server_id, isset($p['id']) ? $p['id'] : null, $p['clientId']);
-                if(!$email) return null;
-                return ['POST', $clients . '/del/' . $enc($email), null, []];
-            case 'resetClientTraffic': return ['POST', $clients . '/resetTraffic/' . $enc($p['email']), null, []];
-            case 'clearClientIps':     return ['POST', $clients . '/clearIps/' . $enc($p['email']), null, []];
-            case 'newX25519Cert':      return ['GET', '/panel/api/server/getNewX25519Cert', null, []];
-            case 'defaultSettings':    return ['POST', '/panel/api/setting/defaultSettings', null, []];
+/** Email of the client that owns this uuid / trojan password (new panels address clients by email). */
+function panelApiEmailByUuid($server_id, $uuid){
+    $list = panelApi($server_id, 'list');
+    if(!is_object($list) || empty($list->obj)) return null;
+    foreach($list->obj as $row){
+        $settings = json_decode($row->settings, true);
+        foreach(($settings['clients'] ?? []) as $c){
+            if((isset($c['id']) && $c['id'] == $uuid) || (isset($c['password']) && $c['password'] == $uuid)) return $c['email'] ?? null;
         }
-        return null;
     }
+    return null;
+}
 
-    $base = ($type == "alireza") ? "/xui/API/inbounds" : "/xui/inbound";
-    $api = ($type == "alireza");
+function panelApiClientsRoute($op, $p, $data, $server_id = null){
+    $enc = function($v){ return rawurlencode((string)$v); };
     switch($op){
-        case 'list':
-            return [$api ? 'GET' : 'POST', $base . '/list', null, []];
-        case 'addInbound':
-            return ['POST', $base . '/add', $data, []];
-        case 'updateInbound':
-            return ['POST', $base . '/update/' . $enc($p['id']), $data, []];
-        case 'delInbound':
-            return ['POST', $base . '/del/' . $enc($p['id']), null, []];
-        case 'addClient':
-            if(!$api) return null;
-            return ['POST', $base . '/addClient/', $data, []];
         case 'updateClient':
-            if(!$api) return null;
-            return ['POST', $base . '/updateClient/' . $enc($p['clientId']), $data, []];
+            $settings = is_array($data) && isset($data['settings']) ? json_decode($data['settings'], true) : null;
+            $client = $settings['clients'][0] ?? null;
+            if(!$client || empty($p['clientId'])) return null;
+            $email = !empty($p['email']) ? $p['email'] : panelApiEmailByUuid($server_id, $p['clientId']);
+            if(!$email) return null;
+            return ['POST', '/panel/api/clients/update/' . $enc($email), json_encode($client)];
         case 'delClient':
-            if(!$api) return null;
-            return ['POST', $base . '/' . $enc($p['id']) . '/delClient/' . $enc($p['clientId']), null, []];
+            if(empty($p['clientId'])) return null;
+            $email = !empty($p['email']) ? $p['email'] : panelApiEmailByUuid($server_id, $p['clientId']);
+            if(!$email) return null;
+            return ['POST', '/panel/api/clients/del/' . $enc($email), null];
+        case 'addClient':
+            $settings = is_array($data) && isset($data['settings']) ? json_decode($data['settings'], true) : null;
+            $client = $settings['clients'][0] ?? null;
+            if(!$client || !isset($data['id'])) return null;
+            return ['POST', '/panel/api/clients/add', json_encode(['client' => $client, 'inboundIds' => [intval($data['id'])]])];
         case 'resetClientTraffic':
-            if(!$api && (!isset($p['id']) || $p['id'] === '')) return ['POST', $base . '/resetClientTraffic/' . $enc($p['email']), null, []];
-            return ['POST', $base . '/' . $enc($p['id']) . '/resetClientTraffic/' . $enc($p['email']), null, []];
+            if(empty($p['email'])) return null;
+            return ['POST', '/panel/api/clients/resetTraffic/' . $enc($p['email']), null];
         case 'clearClientIps':
-            return ['POST', $base . '/clearClientIps/' . $enc($p['email']), null, []];
-        case 'newX25519Cert':
-            return ['POST', '/server/getNewX25519Cert', null, []];
+            if(empty($p['email'])) return null;
+            return ['POST', '/panel/api/clients/clearIps/' . $enc($p['email']), null];
     }
     return null;
 }
@@ -298,12 +326,13 @@ function panelApiRoute($type, $op, $p, $data, $server_id = null){
  * The one entry point for every bot -> panel call.
  *
  * $op     list | addInbound | updateInbound | delInbound | addClient |
- *         updateClient | delClient | resetClientTraffic | clearClientIps | newX25519Cert
+ *         updateClient | delClient | resetClientTraffic | clearClientIps | newX25519Cert |
+ *         defaultSettings | defaultSettingsLegacy
  * $params values used in the route (id, clientId, email)
- * $data   form fields sent to the panel (client calls carry {"settings": json, "id": inboundId})
+ * $data   form fields sent to the panel
  *
- * Returns the decoded JSON reply (object), like json_decode() did in the old
- * code. When auth fails it returns null (panel unreachable) or
+ * Returns the decoded JSON reply (object), exactly like json_decode() did in
+ * the old code. When login fails it returns null (panel unreachable) or
  * (object)['success' => false, ...] (credentials refused).
  */
 function panelApi($server_id, $op, $params = [], $data = null){
@@ -316,81 +345,52 @@ function panelApi($server_id, $op, $params = [], $data = null){
     }
 
     $type = $server_info['type'];
-
-    // 3x-ui v3 silently re-attaches an existing client when email and subId match,
-    // which would hand a new buyer somebody else's account. Refuse duplicates here.
-    if($type == "sanaei" && ($op == 'addClient' || $op == 'addInbound')){
-        $newClients = [];
-        if($op == 'addClient'){
-            $c = panelApiClientFromSettings($data);
-            if($c) $newClients[] = $c;
-        }else{
-            $st = isset($data['settings']) ? json_decode($data['settings'], true) : null;
-            if(isset($st['clients']) && is_array($st['clients'])) $newClients = $st['clients'];
-        }
-        $dup = $newClients ? panelApiFindDuplicate($server_id, $newClients) : null;
-        if($dup !== null) return (object) ['success' => false, 'msg' => "Duplicate email: " . $dup];
-    }
-
-    $route = panelApiRoute($type, $op, $params, $data, $server_id);
-    if(!$route) return (object) ['success' => false, 'msg' => "operation $op is not supported or its data is incomplete (panel type $type)"];
+    $route = panelApiRoute($type, $op, $params);
+    if(!$route) return (object) ['success' => false, 'msg' => "operation $op is not supported by panel type $type"];
 
     $panel_url = rtrim($server_info['panel_url'], '/');
-    $headers = array_merge($session['headers'], $route[3]);
-    $res = panelApiHttp($route[0], $panel_url . $route[1], $route[2], $headers);
+
+    $auth = !empty($session['token']) ? ['Authorization: Bearer ' . $session['token']] : [];
+    $isNewPanel = !empty($session['csrf']) || !empty($session['token']);
+
+    // New 3x-ui (the one that asks for a csrf token, or any API token) only has the /panel/api/clients/* routes.
+    // Try them first; when the panel answers with something that is not JSON, fall back to the old route below.
+    if($type == "sanaei" && $isNewPanel){
+        $new = panelApiClientsRoute($op, $params, $data, $server_id);
+        if($new){
+            $res = panelApiHttp($new[0], $panel_url . $new[1], $new[2], $session['cookie'], PANEL_API_TIMEOUT, 15, false, $session['csrf'] ?? null,
+                array_merge($new[2] !== null ? ['Content-Type: application/json'] : [], $auth));
+            $decoded = json_decode((string)$res['body']);
+            if(is_object($decoded)) return $decoded;
+        }
+    }
+
+    $res = panelApiHttp($route[0], $panel_url . $route[1], $data, $session['cookie'], PANEL_API_TIMEOUT, 15, false, $session['csrf'] ?? null, $auth);
 
     // Some alireza builds expose the inbound list on the root of the API base.
     if($op == 'list' && $type == "alireza" && !is_object(json_decode((string)$res['body']))){
-        $res = panelApiHttp('GET', $panel_url . '/xui/API/inbounds/', null, $session['headers']);
+        $res = panelApiHttp('GET', $panel_url . panelApiPrefix($type) . '/', null, $session['cookie'], PANEL_API_TIMEOUT, 15, false, $session['csrf'] ?? null, $auth);
     }
 
-    return json_decode((string)$res['body']);
+    $decoded = json_decode((string)$res['body']);
+    if($op == 'list') panelApiNormalizeInbounds($decoded);
+    return $decoded;
 }
 
-/** 3x-ui v3 rejects whitespace, "/", "\" and control characters in email and subId. */
-function panelApiSafeName($name){
-    return preg_replace('/[\s\/\\\\\x00-\x1f\x7f]+/u', '-', (string) $name);
-}
-
-/** Returns the first email/subId of $clients that already exists on the panel, else null. */
-function panelApiFindDuplicate($server_id, $clients){
-    $list = panelApi($server_id, 'list');
-    if(!is_object($list) || !isset($list->obj) || !is_array($list->obj)) return null;
-
-    $emails = [];
-    $subs = [];
-    foreach($list->obj as $row){
-        $settings = json_decode($row->settings, true);
-        if(!isset($settings['clients']) || !is_array($settings['clients'])) continue;
-        foreach($settings['clients'] as $c){
-            if(!empty($c['email'])) $emails[strtolower($c['email'])] = true;
-            if(!empty($c['subId'])) $subs[$c['subId']] = true;
+/**
+ * New 3x-ui returns settings / streamSettings / sniffing of every inbound as nested JSON objects,
+ * old panels (and all the bot code) expect JSON encoded strings. Convert them back so
+ * json_decode($row->settings) keeps working everywhere.
+ */
+function panelApiNormalizeInbounds($decoded){
+    if(!is_object($decoded) || !isset($decoded->obj) || !is_array($decoded->obj)) return;
+    foreach($decoded->obj as $row){
+        if(!is_object($row)) continue;
+        foreach(['settings', 'streamSettings', 'sniffing'] as $field){
+            if(isset($row->$field) && (is_object($row->$field) || is_array($row->$field))){
+                $row->$field = json_encode($row->$field, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            }
         }
     }
-    foreach($clients as $c){
-        if(!empty($c['email']) && isset($emails[strtolower($c['email'])])) return $c['email'];
-        if(!empty($c['subId']) && isset($subs[$c['subId']])) return $c['subId'];
-    }
-    return null;
-}
-
-/** Subscription base URL configured in the panel (ends with the sub path), "" when subs are disabled. */
-function panelApiSubBase($server_id){
-    static $cache = [];
-    if(isset($cache[$server_id])) return $cache[$server_id];
-
-    $uri = '';
-    $res = panelApi($server_id, 'defaultSettings');
-    if(is_object($res) && !empty($res->success) && isset($res->obj) && is_object($res->obj)){
-        if(!empty($res->obj->subEnable) && !empty($res->obj->subURI)) $uri = (string) $res->obj->subURI;
-    }
-    return $cache[$server_id] = $uri;
-}
-
-/** The user's own subscription link, built by the panel's settings: <subURI><subId>. */
-function getPanelSubLink($server_id, $subId){
-    $base = panelApiSubBase($server_id);
-    if($base === '' || $subId === '' || $subId === null) return '';
-    return rtrim($base, '/') . '/' . rawurlencode((string) $subId);
 }
 ?>
