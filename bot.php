@@ -35,6 +35,71 @@ if($robotState == "off" && $from_id != $admin){
     sendMessage($mainValues['bot_is_updating']);
     exit();
 }
+/* ------------------------------------------------------------------
+ * /edit  ( admins ): reply to any message of the bot with /edit to change its text,
+ * or the label of one of its inline buttons
+ * ------------------------------------------------------------------ */
+if(($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(isset($update->message) && trim($text) == "/edit"){
+        $replied = $update->message->reply_to_message ?? null;
+        if(!$replied){
+            sendMessage("↩️ | روی پیامی که می‌خواهی متنش را عوض کنی ریپلای کن و /edit بفرست");
+            exit();
+        }
+        $repliedText = $replied->text ?? ($replied->caption ?? "");
+        $editKeys = [];
+        $seenBtn = [];
+
+        $textKey = findBotTextKey($repliedText);
+        if($textKey !== null) $editKeys[] = [['text' => "✏️ متن پیام ( $textKey )", 'callback_data' => "editTextKey" . $textKey]];
+
+        $inlineRows = $replied->reply_markup->inline_keyboard ?? [];
+        foreach($inlineRows as $row){
+            foreach($row as $btn){
+                $btnText = $btn->text ?? "";
+                $btnKey = array_search($btnText, $buttonValues, true);
+                if($btnKey !== false && !isset($seenBtn[$btnKey])){
+                    $seenBtn[$btnKey] = true;
+                    $editKeys[] = [['text' => "🔘 دکمه: " . $btnText, 'callback_data' => "editBtnKey" . $btnKey]];
+                }
+            }
+        }
+        if(count($editKeys) == 0){
+            sendMessage("⚠️ | این پیام قابل ویرایش نیست ( متنش توی کد ثابت نوشته شده یا از اطلاعات کاربر ساخته شده )");
+        }else{
+            sendMessage("✏️ | کدوم قسمت رو ویرایش کنم؟", json_encode(['inline_keyboard' => $editKeys]));
+        }
+        exit();
+    }
+
+    if(preg_match('/^edit(Text|Btn)Key(.+)/', $data ?? "", $match)){
+        $isText = $match[1] == "Text";
+        $key = $match[2];
+        $current = $isText ? ($mainValues[$key] ?? null) : ($buttonValues[$key] ?? null);
+        if($current === null){ alert("این مورد پیدا نشد"); exit(); }
+        $original = $isText ? ($defaultMainValues[$key] ?? $current) : ($defaultButtonValues[$key] ?? $current);
+
+        setUser('edit' . $match[1] . 'New' . $key);
+        $info = "✏️ | متن جدید را بفرستید\n\n▪️ متن فعلی:\n" . $current;
+        if($isText) $info .= "\n\n⚠️ کلمه‌های بزرگ انگلیسی ( مثل AMOUNT یا USERID ) جای اطلاعات واقعی هستند، آن‌ها را در متن جدید نگه دارید.";
+        sendMessage($info, $cancelKey, null);
+        if($original !== $current) sendMessage("♻️ برای برگرداندن به متن اصلی بزنید:", json_encode(['inline_keyboard' => [[['text' => "♻️ متن اصلی", 'callback_data' => "reset" . $match[1] . "Key" . $key]]]]));
+        exit();
+    }
+    if(preg_match('/^reset(Text|Btn)Key(.+)/', $data ?? "", $match)){
+        saveBotTextOverride($match[1] == "Text" ? 'TEXT_OVERRIDE' : 'BUTTON_OVERRIDE', $match[2], null);
+        setUser();
+        sendMessage("✅ | به متن اصلی برگشت", $removeKeyboard);
+        exit();
+    }
+    if(isset($update->message) && preg_match('/^edit(Text|Btn)New(.+)/', $userInfo['step'], $match) && $text != $buttonValues['cancel']){
+        saveBotTextOverride($match[1] == "Text" ? 'TEXT_OVERRIDE' : 'BUTTON_OVERRIDE', $match[2], $text);
+        setUser();
+        sendMessage("✅ | ذخیره شد، از همین الان اعمال میشه", $removeKeyboard);
+        exit();
+    }
+}
+
 if(strstr($text, "/start ")){
     $inviter = str_replace("/start ", "", $text);
     if($inviter < 0) exit();
@@ -2513,10 +2578,16 @@ if((preg_match('/^discountCustomPlanDay(\d+)/',$userInfo['step'], $match) || pre
     	$volume = $match[3];
         $days = $match[4];
         if($match['buyType'] != "much"){
-            if(preg_match('/^[a-z]+[0-9]+$/',$text)){} else{
+            $nameCheck = checkAccountName($text, $id);
+            if($nameCheck['error'] == 'invalid'){
                 sendMessage($mainValues['incorrect_config_name']);
                 exit();
             }
+            if($nameCheck['error'] == 'taken'){
+                sendMessage("❌ | این اسم قابل انتخاب نیست، اسم دیگری انتخاب کنید");
+                exit();
+            }
+            $text = $nameCheck['name'];
         }
     }
     $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? and `active`=1");
@@ -2724,13 +2795,17 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
         }        
     }
     elseif(preg_match("/enterAccountName(\d+)_(\d+)/",$userInfo['step'])){
-        if(preg_match('/^[a-z]+[0-9]+$/',$text)){
-            $remark = $text;
-            setUser();
-        } else{
+        $nameCheck = checkAccountName($text, $match[1]);
+        if($nameCheck['error'] == 'invalid'){
             sendMessage($mainValues['incorrect_config_name']);
             exit();
         }
+        if($nameCheck['error'] == 'taken'){
+            sendMessage("❌ | این اسم قابل انتخاب نیست، اسم دیگری انتخاب کنید");
+            exit();
+        }
+        $remark = $nameCheck['name'];
+        setUser();
     }
     else{
         if($match['buyType'] == "much"){

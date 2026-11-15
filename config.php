@@ -10,6 +10,24 @@ if($connection->connect_error){
 }
 $connection->set_charset("utf8mb4");
 
+/* texts / button labels changed by the admin with /edit are stored in the `setting` table and replace the defaults of values.php */
+$defaultMainValues = $mainValues;
+$defaultButtonValues = $buttonValues;
+foreach(['TEXT_OVERRIDE', 'BUTTON_OVERRIDE'] as $overrideType){
+    $overrideStmt = $connection->prepare("SELECT `value` FROM `setting` WHERE `type` = ?");
+    if(!$overrideStmt) continue;
+    $overrideStmt->bind_param("s", $overrideType);
+    $overrideStmt->execute();
+    $overrideRow = $overrideStmt->get_result()->fetch_assoc();
+    $overrideStmt->close();
+    $overrideList = $overrideRow ? json_decode($overrideRow['value'], true) : null;
+    if(!is_array($overrideList)) continue;
+    foreach($overrideList as $k => $v){
+        if($overrideType == 'TEXT_OVERRIDE' && isset($mainValues[$k])) $mainValues[$k] = $v;
+        if($overrideType == 'BUTTON_OVERRIDE' && isset($buttonValues[$k])) $buttonValues[$k] = $v;
+    }
+}
+
 function bot($method, $datas = []){
     global $botToken;
     $url = "https://api.telegram.org/bot" . $botToken . "/" . $method;
@@ -4420,6 +4438,114 @@ function getOrderSubLink($server_id, $serverType, $token){
  * sub QR on -> QR of the sub link, config QR on -> QR of the config link,
  * none of them on -> old behaviour (config QR, or sub QR when the config link is hidden).
  */
+
+/* ------------------------------------------------------------------
+ * Account name typed by the customer
+ * letters ( any case ), digits anywhere, - and _ ; spaces become -
+ * ------------------------------------------------------------------ */
+function checkAccountName($raw, $planId){
+    global $connection;
+    $name = preg_replace('/\s+/u', '-', trim((string)$raw));
+    if(!preg_match('/^[A-Za-z0-9_-]{3,32}$/', $name)) return ['ok' => false, 'name' => $name, 'error' => 'invalid'];
+
+    $stmt = $connection->prepare("SELECT `server_id` FROM `server_plans` WHERE `id` = ?");
+    $stmt->bind_param("i", $planId);
+    $stmt->execute();
+    $plan = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$plan) return ['ok' => true, 'name' => $name, 'error' => ''];
+    $serverId = $plan['server_id'];
+
+    // 1) accounts the bot already sold on this server
+    $stmt = $connection->prepare("SELECT COUNT(*) AS c FROM `orders_list` WHERE `server_id` = ? AND LOWER(`remark`) = LOWER(?)");
+    $stmt->bind_param("is", $serverId, $name);
+    $stmt->execute();
+    $count = $stmt->get_result()->fetch_assoc()['c'];
+    $stmt->close();
+    if($count > 0) return ['ok' => false, 'name' => $name, 'error' => 'taken'];
+
+    // 2) users that exist on the server itself
+    $panelList = getJson($serverId);
+    if(is_object($panelList) && !empty($panelList->success) && is_array($panelList->obj)){
+        $lower = strtolower($name);
+        foreach($panelList->obj as $row){
+            if(strtolower((string)($row->remark ?? '')) === $lower) return ['ok' => false, 'name' => $name, 'error' => 'taken'];
+            $settings = json_decode((string)($row->settings ?? ''), true);
+            foreach(($settings['clients'] ?? []) as $client){
+                if(strtolower((string)($client['email'] ?? '')) === $lower) return ['ok' => false, 'name' => $name, 'error' => 'taken'];
+            }
+            foreach(($row->clientStats ?? []) as $stat){
+                if(is_object($stat) && strtolower((string)($stat->email ?? '')) === $lower) return ['ok' => false, 'name' => $name, 'error' => 'taken'];
+            }
+        }
+    }
+    return ['ok' => true, 'name' => $name, 'error' => ''];
+}
+
+/* ------------------------------------------------------------------
+ * /edit : admin changes the text of a message / button he is looking at
+ * ------------------------------------------------------------------ */
+function normalizeBotText($t){
+    $t = strip_tags((string)$t);
+    $t = preg_replace('/[\x{200B}-\x{200F}\x{202A}-\x{202E}\x{2066}-\x{2069}]/u', '', $t);
+    $t = preg_replace('/\s+/u', ' ', $t);
+    return trim($t);
+}
+/** which $mainValues key produced this message text ? returns the key or null */
+function findBotTextKey($shown){
+    global $mainValues;
+    $shownN = normalizeBotText($shown);
+    if($shownN === '') return null;
+
+    $bestKey = null; $bestScore = 0;
+    foreach($mainValues as $key => $tpl){
+        if(!is_string($tpl)) continue;
+        $tplN = normalizeBotText($tpl);
+        if(mb_strlen($tplN) < 4) continue;
+        if($tplN === $shownN) return $key;
+
+        // placeholders such as AMOUNT / USERID / DAY-PRICE are written in capitals
+        $parts = preg_split('/([A-Z][A-Z0-9_\-]{2,})/u', $tplN, -1, PREG_SPLIT_DELIM_CAPTURE);
+        if(count($parts) > 1){
+            $regex = '';
+            foreach($parts as $i => $part) $regex .= ($i % 2 == 1) ? '.+?' : preg_quote($part, '/');
+            if(@preg_match('/^' . $regex . '$/su', $shownN)){
+                $score = 100 + mb_strlen($tplN);   // the longer template is the more specific one
+                if($score > $bestScore){ $bestScore = $score; $bestKey = $key; }
+                continue;
+            }
+        }
+        if($bestScore < 100){
+            similar_text($tplN, $shownN, $pct);
+            if($pct >= 88 && $pct > $bestScore){ $bestScore = $pct; $bestKey = $key; }
+        }
+    }
+    return $bestKey;
+}
+function saveBotTextOverride($type, $key, $value){
+    global $connection;
+    $stmt = $connection->prepare("SELECT `id`, `value` FROM `setting` WHERE `type` = ?");
+    $stmt->bind_param("s", $type);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $list = $row ? json_decode($row['value'], true) : [];
+    if(!is_array($list)) $list = [];
+    if($value === null) unset($list[$key]); else $list[$key] = $value;
+    $json = json_encode($list, JSON_UNESCAPED_UNICODE);
+
+    if($row){
+        $stmt = $connection->prepare("UPDATE `setting` SET `value` = ? WHERE `id` = ?");
+        $stmt->bind_param("si", $json, $row['id']);
+    }else{
+        $stmt = $connection->prepare("INSERT INTO `setting` (`type`, `value`) VALUES (?, ?)");
+        $stmt->bind_param("ss", $type, $json);
+    }
+    $stmt->execute();
+    $stmt->close();
+}
+
 function getAccountQrPayloads($link, $subLink){
     global $botState;
     $out = [];
