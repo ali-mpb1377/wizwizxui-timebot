@@ -109,7 +109,7 @@ if($botState['cartToCartAutoAcceptState']=="on"){
             
             $date = time();
             $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
-            $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
+            $expire_date = $days == 0 ? 2147000000 : $date + (86400 * $days);   // unlimited: a value that fits the int(11) column
             $type = $file_detail['type'];
             $protocol = $file_detail['protocol'];
             $price = $payInfo['price'];   
@@ -288,7 +288,7 @@ if($botState['cartToCartAutoAcceptState']=="on"){
         
         if($botState['subLinkState'] == "on") $acc_text .= "
         
-        🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
+        
         
         
         🌐 subscription : <code>$subLink</code>
@@ -389,7 +389,7 @@ if($botState['cartToCartAutoAcceptState']=="on"){
             	exit;
             }
             $stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
-            $newExpire = $time + ($days == 0 ? 36500 : $days) * 86400;
+            $newExpire = $days == 0 ? 2147000000 : $time + $days * 86400;
             $stmt->bind_param("ii", $newExpire, $oid);
             $stmt->execute();
             $stmt->close();

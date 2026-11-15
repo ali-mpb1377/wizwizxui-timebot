@@ -18,6 +18,8 @@ if(!defined('PANEL_API_LOGIN_TIMEOUT')) define('PANEL_API_LOGIN_TIMEOUT', 3);
 if(!defined('PANEL_API_TIMEOUT')) define('PANEL_API_TIMEOUT', 15);
 // A server saved with this username uses a 3x-ui API token (Settings -> Security -> API Token) stored in `password`.
 // Bearer-token requests need no login and no csrf token.
+// every client the bot creates on a new 3x-ui is put in this group (created on the panel when missing)
+if(!defined('PANEL_API_CLIENT_GROUP')) define('PANEL_API_CLIENT_GROUP', 'Robot');
 if(!defined('PANEL_API_TOKEN_USER')) define('PANEL_API_TOKEN_USER', 'api-token');
 
 function panelApiServer($server_id){
@@ -260,6 +262,12 @@ function panelApiRoute($type, $op, $p){
             return ['POST', $base . '/clearClientIps/' . $enc($p['email'])];
         case 'newX25519Cert':
             return ['POST', '/server/getNewX25519Cert'];
+        case 'clientGroups':
+            if($type != "sanaei") return null;
+            return ['GET', '/panel/api/clients/groups'];
+        case 'clientGroupCreate':
+            if($type != "sanaei") return null;
+            return ['POST', '/panel/api/clients/groups/create'];
         case 'clientLinks':
             if($type != "sanaei" || empty($p['email'])) return null;
             return ['GET', '/panel/api/clients/links/' . $enc($p['email'])];
@@ -292,6 +300,22 @@ function panelApiEmailByUuid($server_id, $uuid){
     return null;
 }
 
+/** Makes sure the group exists on the panel (once per request). */
+function panelApiEnsureGroup($server_id, $name){
+    static $done = [];
+    $key = $server_id . '|' . $name;
+    if(isset($done[$key])) return;
+    $done[$key] = true;
+
+    $list = panelApi($server_id, 'clientGroups');
+    if(is_object($list) && !empty($list->success) && is_array($list->obj)){
+        foreach($list->obj as $g){
+            if(is_object($g) && isset($g->name) && strcasecmp($g->name, $name) == 0) return;
+        }
+    }
+    panelApi($server_id, 'clientGroupCreate', ['name' => $name]);
+}
+
 function panelApiClientsRoute($op, $p, $data, $server_id = null){
     $enc = function($v){ return rawurlencode((string)$v); };
     switch($op){
@@ -307,10 +331,16 @@ function panelApiClientsRoute($op, $p, $data, $server_id = null){
             $email = !empty($p['email']) ? $p['email'] : panelApiEmailByUuid($server_id, $p['clientId']);
             if(!$email) return null;
             return ['POST', '/panel/api/clients/del/' . $enc($email), null];
+        case 'clientGroups':
+            return ['GET', '/panel/api/clients/groups', null];
+        case 'clientGroupCreate':
+            if(empty($p['name'])) return null;
+            return ['POST', '/panel/api/clients/groups/create', json_encode(['name' => $p['name']])];
         case 'addClient':
             $settings = is_array($data) && isset($data['settings']) ? json_decode($data['settings'], true) : null;
             $client = $settings['clients'][0] ?? null;
             if(!$client || !isset($data['id'])) return null;
+            if(empty($client['group'])) $client['group'] = PANEL_API_CLIENT_GROUP;
             return ['POST', '/panel/api/clients/add', json_encode(['client' => $client, 'inboundIds' => [intval($data['id'])]])];
         case 'resetClientTraffic':
             if(empty($p['email'])) return null;
@@ -356,6 +386,7 @@ function panelApi($server_id, $op, $params = [], $data = null){
     // New 3x-ui (the one that asks for a csrf token, or any API token) only has the /panel/api/clients/* routes.
     // Try them first; when the panel answers with something that is not JSON, fall back to the old route below.
     if($type == "sanaei" && $isNewPanel){
+        if($op == 'addClient') panelApiEnsureGroup($server_id, PANEL_API_CLIENT_GROUP);
         $new = panelApiClientsRoute($op, $params, $data, $server_id);
         if($new){
             $res = panelApiHttp($new[0], $panel_url . $new[1], $new[2], $session['cookie'], PANEL_API_TIMEOUT, 15, false, $session['csrf'] ?? null,

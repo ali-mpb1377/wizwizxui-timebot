@@ -1,4 +1,5 @@
 <?php
+http_response_code(404); exit(); // volume web page is disabled
 if(!file_exists("baseInfo.php") || !file_exists("config.php")){
     form("فایل های مورد نیاز یافت نشد");
     exit();

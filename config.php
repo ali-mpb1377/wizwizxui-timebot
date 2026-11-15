@@ -4433,7 +4433,8 @@ function getAccountQrPayloads($link, $subLink){
  * anyway, so the customer always receives his links.
  */
 function sendAccountQr($payloads, $caption, $keyboard = null, $chatId = null){
-    global $botUrl;
+    global $from_id;
+    $chatId = $chatId ?? $from_id;
     if(!is_array($payloads)) $payloads = [$payloads];
     $first = true;
     $anySent = false;
@@ -4446,9 +4447,9 @@ function sendAccountQr($payloads, $caption, $keyboard = null, $chatId = null){
                 if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH', 540);
                 if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT', 540);
 
-                $name = RandomString() . ".png";
-                $file = __DIR__ . "/" . $name;
+                $file = __DIR__ . "/" . RandomString() . ".png";
                 QRcode::png($payload, $file, 'L', 11, 0);
+                if(!file_exists($file)) throw new \Exception("QR file was not created (is " . __DIR__ . " writable?)");
                 addBorderImage($file);
 
                 $bg = imagecreatefromjpeg(__DIR__ . "/settings/QRCode.jpg");
@@ -4458,9 +4459,10 @@ function sendAccountQr($payloads, $caption, $keyboard = null, $chatId = null){
                 imagedestroy($bg);
                 imagedestroy($qr);
 
-                $res = sendPhoto($botUrl . $name, $first ? $caption : "QR", $first ? $keyboard : null, "HTML", $chatId);
+                // the file is uploaded to telegram: no public bot url is needed
+                $res = botUploadPhoto($chatId, $file, $first ? $caption : "QR", $first ? $keyboard : null);
                 $sent = is_object($res) && !empty($res->ok);
-                if(!$sent) error_log("sendAccountQr: telegram refused the photo " . json_encode($res));
+                if(!$sent) error_log("sendAccountQr: telegram refused the photo: " . json_encode($res));
             }
         }catch(\Throwable $e){
             error_log("sendAccountQr: " . $e->getMessage());
@@ -4469,6 +4471,27 @@ function sendAccountQr($payloads, $caption, $keyboard = null, $chatId = null){
         if($sent){ $first = false; $anySent = true; }
     }
     if(!$anySent) sendMessage($caption, $keyboard, "HTML", $chatId);
+}
+/** sendPhoto with the image uploaded as a file (multipart) */
+function botUploadPhoto($chatId, $filePath, $caption = null, $keyboard = null){
+    global $botToken;
+    $fields = [
+        'chat_id' => $chatId,
+        'photo' => new CURLFile($filePath, 'image/png', 'qr.png'),
+        'parse_mode' => 'HTML'
+    ];
+    if($caption !== null) $fields['caption'] = $caption;
+    if($keyboard !== null) $fields['reply_markup'] = $keyboard;
+
+    $ch = curl_init("https://api.telegram.org/bot" . $botToken . "/sendPhoto");
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 40);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
+    $res = curl_exec($ch);
+    if(curl_error($ch)) error_log("botUploadPhoto: " . curl_error($ch));
+    curl_close($ch);
+    return json_decode((string)$res);
 }
 
 /** What the QR code of a new account contains: honours the "config link" toggle. */

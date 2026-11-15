@@ -1177,7 +1177,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
     $days = $match[2];
     $date = time();
     $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
-    $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
+    $expire_date = $days == 0 ? 2147000000 : $date + (86400 * $days);   // unlimited: a value that fits the int(11) column
     $type = $file_detail['type'];
     $volume = $match[3];
     $protocol = $file_detail['protocol'];
@@ -1625,7 +1625,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
     
     $date = time();
     $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
-    $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
+    $expire_date = $days == 0 ? 2147000000 : $date + (86400 * $days);   // unlimited: a value that fits the int(11) column
     $type = $file_detail['type'];
     $protocol = $file_detail['protocol'];
     $price = $payInfo['price'];   
@@ -1772,7 +1772,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
 
 if($botState['subLinkState'] == "on") $acc_text .= "
 
-🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
+
 
 
 🌐 subscription : <code>$subLink</code>
@@ -1875,7 +1875,7 @@ if($botState['subLinkState'] == "on") $acc_text .= "
         	exit;
         }
         $stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
-        $newExpire = $time + ($days == 0 ? 36500 : $days) * 86400;
+        $newExpire = $days == 0 ? 2147000000 : $time + $days * 86400;
         $stmt->bind_param("ii", $newExpire, $oid);
         $stmt->execute();
         $stmt->close();
@@ -2861,7 +2861,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
 
     $date = time();
     $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
-    $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
+    $expire_date = $days == 0 ? 2147000000 : $date + (86400 * $days);   // unlimited: a value that fits the int(11) column
     $type = $file_detail['type'];
     $protocol = $file_detail['protocol'];
     $price = $payInfo['price'];
@@ -3007,7 +3007,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
 💝 config : <code>$link</code>":"");
 if($botState['subLinkState'] == "on") $acc_text .= "
 
-🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
+
 
 
 🌐 subscription : <code>$subLink</code>"; 
@@ -3230,7 +3230,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
 
     $date = time();
     $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
-    $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
+    $expire_date = $days == 0 ? 2147000000 : $date + (86400 * $days);   // unlimited: a value that fits the int(11) column
     $type = $file_detail['type'];
     $protocol = $file_detail['protocol'];
     $price = $payInfo['price'];
@@ -3362,7 +3362,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
 💝 config : <code>$vray_link</code>":"");
 if($botState['subLinkState'] == "on") $acc_text .= "
 
-🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
+
 
 \n🌐 subscription : <code>$subLink</code>";
     
@@ -3470,7 +3470,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
     $days = $file_detail['days'];
     $date = time();
     $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
-    $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
+    $expire_date = $days == 0 ? 2147000000 : $date + (86400 * $days);   // unlimited: a value that fits the int(11) column
     $type = $file_detail['type'];
     $volume = $file_detail['volume'];
     $protocol = $file_detail['protocol'];
@@ -3669,7 +3669,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
 💝 config : <code>$link</code>":"");
 if($botState['subLinkState'] == "on") $acc_text .= "
 
-🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
+
 
 \n🌐 subscription : <code>$subLink</code>";
             
@@ -4005,7 +4005,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
     $days = $file_detail['days'];
     $date = time();
     $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
-    $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
+    $expire_date = $days == 0 ? 2147000000 : $date + (86400 * $days);   // unlimited: a value that fits the int(11) column
     $type = $file_detail['type'];
     $volume = $file_detail['volume'];
     $protocol = $file_detail['protocol'];
@@ -4182,7 +4182,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
 💝 config : <code>$link</code>":"");
 if($botState['subLinkState'] == "on") $acc_text .= "
 
-🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
+
 
 \n🌐 subscription : <code>$subLink</code>";
             
@@ -5479,7 +5479,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
     $days = $file_detail['days'];
     $date = time();
     $expire_microdate = $days == 0 ? 0 : floor(microtime(true) * 1000) + (864000 * $days * 100);   // 0 days = no time limit
-    $expire_date = $date + (86400 * ($days == 0 ? 36500 : $days));
+    $expire_date = $days == 0 ? 2147000000 : $date + (86400 * $days);   // unlimited: a value that fits the int(11) column
     $type = $file_detail['type'];
     $volume = $file_detail['volume'];
     $protocol = $file_detail['protocol'];
@@ -5629,7 +5629,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
 💝 config : <code>$link</code>":"");
 if($botState['subLinkState'] == "on") $acc_text .= "
 
-🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
+
 
 \n🌐 subscription : <code>$subLink</code>";
     
@@ -7932,7 +7932,7 @@ if(preg_match('/approveRenewAcc(.*)/',$data,$match) && ($from_id == $admin || $u
 		exit;
 	}
 	$stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
-	$newExpire = $time + ($days == 0 ? 36500 : $days) * 86400;
+	$newExpire = $days == 0 ? 2147000000 : $time + $days * 86400;
 	$stmt->bind_param("ii", $newExpire, $oid);
 	$stmt->execute();
 	$stmt->close();
@@ -8071,7 +8071,7 @@ if(preg_match('/payRenewWithWallet(.*)/', $data,$match)){
 		exit;
 	}
 	$stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
-	$newExpire = $time + ($days == 0 ? 36500 : $days) * 86400;
+	$newExpire = $days == 0 ? 2147000000 : $time + $days * 86400;
 	$stmt->bind_param("ii", $newExpire, $oid);
 	$stmt->execute();
 	$stmt->close();
