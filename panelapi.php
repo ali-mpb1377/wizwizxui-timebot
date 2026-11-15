@@ -300,6 +300,33 @@ function panelApiEmailByUuid($server_id, $uuid){
     return null;
 }
 
+/**
+ * Panel group of the clients created now: the group of the agent who is buying (set when the
+ * agent request was approved), the default group for everybody else.
+ */
+function panelApiClientGroup(){
+    global $connection, $uid, $from_id;
+    $user = $uid ?? $from_id ?? null;
+    if(!$user || !isset($connection)) return PANEL_API_CLIENT_GROUP;
+
+    static $cache = [];
+    if(!isset($cache[$user])){
+        $cache[$user] = PANEL_API_CLIENT_GROUP;
+        $stmt = $connection->prepare("SELECT `is_agent`, `discount_percent` FROM `users` WHERE `userid` = ?");
+        if($stmt){
+            $stmt->bind_param("s", $user);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if($row && $row['is_agent'] == 1){
+                $d = json_decode((string)$row['discount_percent'], true);
+                if(is_array($d) && !empty($d['group'])) $cache[$user] = $d['group'];
+            }
+        }
+    }
+    return $cache[$user];
+}
+
 /** Makes sure the group exists on the panel (once per request). */
 function panelApiEnsureGroup($server_id, $name){
     static $done = [];
@@ -340,7 +367,7 @@ function panelApiClientsRoute($op, $p, $data, $server_id = null){
             $settings = is_array($data) && isset($data['settings']) ? json_decode($data['settings'], true) : null;
             $client = $settings['clients'][0] ?? null;
             if(!$client || !isset($data['id'])) return null;
-            if(empty($client['group'])) $client['group'] = PANEL_API_CLIENT_GROUP;
+            if(empty($client['group'])) $client['group'] = panelApiClientGroup();
             return ['POST', '/panel/api/clients/add', json_encode(['client' => $client, 'inboundIds' => [intval($data['id'])]])];
         case 'resetClientTraffic':
             if(empty($p['email'])) return null;
@@ -386,7 +413,7 @@ function panelApi($server_id, $op, $params = [], $data = null){
     // New 3x-ui (the one that asks for a csrf token, or any API token) only has the /panel/api/clients/* routes.
     // Try them first; when the panel answers with something that is not JSON, fall back to the old route below.
     if($type == "sanaei" && $isNewPanel){
-        if($op == 'addClient') panelApiEnsureGroup($server_id, PANEL_API_CLIENT_GROUP);
+        if($op == 'addClient') panelApiEnsureGroup($server_id, panelApiClientGroup());
         $new = panelApiClientsRoute($op, $params, $data, $server_id);
         if($new){
             $res = panelApiHttp($new[0], $panel_url . $new[1], $new[2], $session['cookie'], PANEL_API_TIMEOUT, 15, false, $session['csrf'] ?? null,

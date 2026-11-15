@@ -282,7 +282,7 @@ if($botState['cartToCartAutoAcceptState']=="on"){
         📡 پروتکل: $protocol
         🔮 نام سرویس: $remark
         🔋حجم سرویس: $volume گیگ
-        ⏰ مدت سرویس: $days روز⁮⁮ ⁮⁮
+        ⏰ مدت سرویس: " . daysLabel($days) . "⁮⁮ ⁮⁮
         " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
         💝 config : <code>$link</code>":"");
         

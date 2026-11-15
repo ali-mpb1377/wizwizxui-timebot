@@ -407,7 +407,7 @@ if($payType == "BUY_SUB"){
 📡 پروتکل: $protocol
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
-⏰ مدت سرویس: $days روز
+⏰ مدت سرویس: " . daysLabel($days) . "
 ".
 ($botState['configLinkState'] != "off" && $serverType != "marzban"?
 "
@@ -490,7 +490,7 @@ sendMessage("
 💰مبلغ پرداختی: $amount تومان
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
-⏰ مدت سرویس: $days روز
+⏰ مدت سرویس: " . daysLabel($days) . "
 ⁮⁮ 
 ",$keys,"html", $admin);
 }

@@ -225,7 +225,7 @@ while($payParam = $paysList->fetch_assoc()){
                 📡 پروتکل: $protocol
                 🔮 نام سرویس: $remark
                 🔋حجم سرویس: $volume گیگ
-                ⏰ مدت سرویس: $days روز
+                ⏰ مدت سرویس: " . daysLabel($days) . "
                 ".
                 ($botState['configLinkState'] != "off" && $serverType != "marzban"?
                 "
@@ -309,7 +309,7 @@ while($payParam = $paysList->fetch_assoc()){
                 💰مبلغ پرداختی: $price تومان ($tronPrice ترون)
                 🔮 نام سرویس: $remark
                 🔋حجم سرویس: $volume گیگ
-                ⏰ مدت سرویس: $days روز
+                ⏰ مدت سرویس: " . daysLabel($days) . "
                 ⁮⁮ 
                 ",$keys,"html", $admin);
                 }

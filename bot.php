@@ -1766,7 +1766,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
 📡 پروتکل: $protocol
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
-⏰ مدت سرویس: $days روز⁮⁮ ⁮⁮
+⏰ مدت سرویس: " . daysLabel($days) . "⁮⁮ ⁮⁮
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
 
@@ -2093,7 +2093,7 @@ if($botState['subLinkState'] == "on") $acc_text .= "
         ⚡️ نام کاربری: $username
         🎈 نام سرویس: $remark
         ⏰ مدت کانفیگ: $volume گیگ
-        حجم کانفیگ:  $days روز
+        حجم کانفیگ:  " . daysLabel($days) . "
         💰قیمت: $price تومان
         ⁮⁮ ⁮⁮
         ",$keys,"html", $admin);
@@ -3002,7 +3002,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
 📡 پروتکل: $protocol
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
-⏰ مدت سرویس: $days روز⁮⁮ ⁮⁮
+⏰ مدت سرویس: " . daysLabel($days) . "⁮⁮ ⁮⁮
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
 if($botState['subLinkState'] == "on") $acc_text .= "
@@ -3357,7 +3357,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
 📡 پروتکل: $protocol
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
-⏰ مدت سرویس: $days روز⁮⁮ ⁮⁮
+⏰ مدت سرویس: " . daysLabel($days) . "⁮⁮ ⁮⁮
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$vray_link</code>":"");
 if($botState['subLinkState'] == "on") $acc_text .= "
@@ -3664,7 +3664,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
 📡 پروتکل: $protocol
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
-⏰ مدت سرویس: $days روز⁮⁮ ⁮⁮
+⏰ مدت سرویس: " . daysLabel($days) . "⁮⁮ ⁮⁮
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
 if($botState['subLinkState'] == "on") $acc_text .= "
@@ -3962,18 +3962,66 @@ if(preg_match('/^agencyApprove(\d+)/',$data,$match) && ($from_id == $admin || $u
 }
 if(preg_match('/^agencyApprove(\d+)_(\d+)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(is_numeric($text)){
-        editKeys(json_encode(['inline_keyboard'=>[
-            [['text'=>$buttonValues['approved'],'callback_data'=>"wizwizch"]]
-            ]]), $match[2]);
-        sendMessage($mainValues['saved_successfuly']);
-        setUser();
-        $discount = json_encode(['normal'=>$text]);
-        $stmt = $connection->prepare("UPDATE `users` SET `is_agent` = 1, `discount_percent` = ?, `agent_date` = ? WHERE `userid` = ?");
-        $stmt->bind_param("sii", $discount, $time, $match[1]);
-        $stmt->execute();
-        $stmt->close();
-        sendMessage($mainValues['agency_request_approved'], null,null,$match[1]);
+        // step 2: the panel group of this agent
+        setUser('agencyGroup' . $match[1] . '_' . $match[2] . '_' . $text);
+        sendMessage("🗂 | نام گروه این نماینده را در پنل وارد کنید
+
+▪️کاربرانی که این نماینده می‌سازد در همین گروه قرار می‌گیرند
+▪️اگر گروه در پنل نباشد، ساخته می‌شود
+▪️برای استفاده از گروه پیش‌فرض ( " . PANEL_API_CLIENT_GROUP . " ) یک - بفرستید", $cancelKey);
     }else sendMessage($mainValues['send_only_number']);
+}
+if(preg_match('/^agencyGroup(\d+)_(\d+)_(.+)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $groupName = trim($text);
+    if(mb_strlen($groupName) > 64){
+        sendMessage("⚠️ نام گروه نباید بیشتر از ۶۴ حرف باشد، دوباره وارد کنید:");
+        exit();
+    }
+    editKeys(json_encode(['inline_keyboard'=>[
+        [['text'=>$buttonValues['approved'],'callback_data'=>"wizwizch"]]
+        ]]), $match[2]);
+    sendMessage($mainValues['saved_successfuly'], $removeKeyboard);
+    setUser();
+    $discountArr = ['normal' => $match[3]];
+    if($groupName != "-" && $groupName != "") $discountArr['group'] = $groupName;
+    $discount = json_encode($discountArr, JSON_UNESCAPED_UNICODE);
+    $stmt = $connection->prepare("UPDATE `users` SET `is_agent` = 1, `discount_percent` = ?, `agent_date` = ? WHERE `userid` = ?");
+    $stmt->bind_param("sii", $discount, $time, $match[1]);
+    $stmt->execute();
+    $stmt->close();
+    sendMessage($mainValues['agency_request_approved'], null,null,$match[1]);
+}
+/* change the panel group of an existing agent */
+if(preg_match('/^editAgentGroup(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("🗂 | نام گروه جدید این نماینده را در پنل وارد کنید ( - = گروه پیش‌فرض " . PANEL_API_CLIENT_GROUP . " ):", $cancelKey);
+    setUser($data);
+}
+if(preg_match('/^editAgentGroup(\d+)/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    $groupName = trim($text);
+    if(mb_strlen($groupName) > 64){
+        sendMessage("⚠️ نام گروه نباید بیشتر از ۶۴ حرف باشد، دوباره وارد کنید:");
+        exit();
+    }
+    $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ?");
+    $stmt->bind_param('i', $match[1]);
+    $stmt->execute();
+    $info = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $discountInfo = json_decode((string)$info['discount_percent'], true);
+    if(!is_array($discountInfo)) $discountInfo = [];
+    if($groupName == "-" || $groupName == "") unset($discountInfo['group']);
+    else $discountInfo['group'] = $groupName;
+    $discountInfo = json_encode($discountInfo, JSON_UNESCAPED_UNICODE);
+
+    $stmt = $connection->prepare("UPDATE `users` SET `discount_percent` = ? WHERE `userid` = ?");
+    $stmt->bind_param("si", $discountInfo, $match[1]);
+    $stmt->execute();
+    $stmt->close();
+    sendMessage($mainValues['saved_successfuly'], $removeKeyboard);
+    sendMessage(str_replace("AGENT-NAME", $userName, $mainValues['agent_discount_settings']), getAgentDiscounts($match[1]));
+    setUser();
 }
 if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     setUser();
@@ -4177,7 +4225,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
 📡 پروتکل: $protocol
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
-⏰ مدت سرویس: $days روز
+⏰ مدت سرویس: " . daysLabel($days) . "
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
 if($botState['subLinkState'] == "on") $acc_text .= "
@@ -5624,7 +5672,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
 📡 پروتکل: $protocol
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
-⏰ مدت سرویس: $days روز
+⏰ مدت سرویس: " . daysLabel($days) . "
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
 if($botState['subLinkState'] == "on") $acc_text .= "
@@ -8506,7 +8554,7 @@ sendMessage("
 ⚡️ نام کاربری: $username
 🎈 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
-⏰ مدت زمان سرویس: $days روز
+⏰ مدت زمان سرویس: " . daysLabel($days) . "
 ❌ حجم باقی مانده: $leftMb
 📆 روز باقیمانده: $expiryDay روز
 ",null,"html", $admin);

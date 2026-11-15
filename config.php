@@ -527,6 +527,7 @@ function getAgentDiscounts($agentId){
     $keys[] = [['text'=>" ",'callback_data'=>"wizwizch"],
     ['text'=>$normal . "%",'callback_data'=>"editAgentDiscountNormal" . $agentId . "_0"],
     ['text'=>"عمومی",'callback_data'=>"wizwizch"]];            
+    $keys[] = [['text'=>"🗂 گروه پنل: " . (!empty($discounts['group']) ? $discounts['group'] : PANEL_API_CLIENT_GROUP),'callback_data'=>"editAgentGroup" . $agentId]];
     
     if($botState['agencyPlanDiscount']=="on"){
         foreach($discounts['plans'] as $planId=>$discount){
@@ -4492,6 +4493,12 @@ function botUploadPhoto($chatId, $filePath, $caption = null, $keyboard = null){
     if(curl_error($ch)) error_log("botUploadPhoto: " . curl_error($ch));
     curl_close($ch);
     return json_decode((string)$res);
+}
+
+/** "30 روز", or a text for plans without a time limit (0 days) */
+function daysLabel($days){
+    if(is_numeric($days) && $days == 0) return "بدون محدودیت زمانی";
+    return $days . " روز";
 }
 
 /** What the QR code of a new account contains: honours the "config link" toggle. */
