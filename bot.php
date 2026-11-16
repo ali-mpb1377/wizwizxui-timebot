@@ -1123,17 +1123,36 @@ if($data=="editRewardChannel" && ($from_id == $admin || $userInfo['isAdmin'] == 
     setUser($data);
 }
 if($userInfo['step'] == "editRewardChannel" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
-    $botId = json_decode(file_get_contents("https://api.telegram.org/bot$botToken/getme"))->result->id;
-    $result = json_decode(file_get_contents("https://api.telegram.org/bot$botToken/getChatMember?chat_id=$text&user_id=$botId"));
-    if($result->ok){
-        if($result->result->status == "administrator"){
-            setSettings('rewardChannel', $text);
-            sendMessage($mainValues['change_bot_settings_message'],getGateWaysKeys());
-            setUser();
-            exit();
+    // spaces / invisible characters from copy-paste are removed; -100xxxxxxxxxx ( private channel ), @name and the id without -100 are accepted
+    $channel = preg_replace('/[\x{200B}-\x{200F}\x{202A}-\x{202E}\x{2066}-\x{2069}\s]+/u', '', (string)$text);
+    $channel = preg_replace('#^https?://t\.me/#i', '', $channel);
+    $candidates = [$channel];
+    if(preg_match('/^\d{9,}$/', $channel)) $candidates[] = "-100" . $channel;
+    elseif(preg_match('/^@?[A-Za-z][A-Za-z0-9_]{4,}$/', $channel)) $candidates = ["@" . ltrim($channel, "@")];
+
+    $me = bot('getMe');
+    $botId = is_object($me) ? ($me->result->id ?? 0) : 0;
+    $problem = "";
+    foreach($candidates as $candidate){
+        $result = bot('getChatMember', ['chat_id' => $candidate, 'user_id' => $botId]);
+        if(is_object($result) && !empty($result->ok)){
+            $status = $result->result->status ?? "";
+            if($status == "creator" || $status == "administrator"){
+                if($status == "administrator" && isset($result->result->can_post_messages) && !$result->result->can_post_messages){
+                    $problem = "ربات ادمین کانال است ولی دسترسی ارسال پیام ( Post Messages ) ندارد";
+                    continue;
+                }
+                setSettings('rewardChannel', (string)$candidate);
+                sendMessage($mainValues['change_bot_settings_message'],getGateWaysKeys());
+                setUser();
+                exit();
+            }
+            $problem = "ربات در این کانال ادمین نیست";
+        }else{
+            $problem = is_object($result) ? ($result->description ?? "") : "";
         }
     }
-    sendMessage("😡|ای بابا ،ربات هنوز تو کانال عضو نشده، اول ربات رو تو کانال ادمین کن و آیدیش رو بفرست");
+    sendMessage("😡|ای بابا ،ربات رو نتونستم توی این کانال پیدا کنم\n\n" . ($problem != "" ? "▪️ $problem\n\n" : "") . "اول ربات رو تو کانال ادمین کن ( با دسترسی ارسال پیام ) و آیدی کانال رو به شکل -100xxxxxxxxxx یا @نام_کانال بفرست");
 }
 if($data=="editLockChannel" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();

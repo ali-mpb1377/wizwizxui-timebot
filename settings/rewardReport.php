@@ -41,7 +41,11 @@ if($rewaredTime>0 && $rewaredChannel != null){
 ☑️ $channelLock
 
 ";
-        sendMessage($txt, null, null, $rewaredChannel);
+        $sent = sendMessage($txt, null, null, $rewaredChannel);
+        if(!is_object($sent) || empty($sent->ok)){
+            // tell the admin why the report did not reach the channel
+            sendMessage("⚠️ گزارش درآمد به کانال ارسال نشد ( " . $rewaredChannel . " )\n" . (is_object($sent) ? ($sent->description ?? "") : "") . "\n\nربات باید در کانال ادمین باشد و دسترسی ارسال پیام داشته باشد", null, null, $admin);
+        }
     }
 }    
 
