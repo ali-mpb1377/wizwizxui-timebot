@@ -5996,7 +5996,9 @@ if($userInfo['step'] == "importAccountSub" && isset($update->message) && $text !
     }
     $totalText = $account['total'] > 0 ? sumerize($account['total']) : "نامحدود";
     $expiryText = $account['expiry'] > 0 ? jdate("Y-m-d H:i", intdiv($account['expiry'], 1000)) : "نامحدود";
-    setUser('importAccountUser' . json_encode($account, JSON_UNESCAPED_UNICODE));
+    $storeAccount = $account;
+    unset($storeAccount['server']);   // keep the step text short
+    setUser('importAccountUser' . json_encode($storeAccount, JSON_UNESCAPED_UNICODE));
     sendMessage("✅ | اکانت پیدا شد
 
 🔮 نام: " . $account['email'] . "
@@ -6025,26 +6027,45 @@ if(preg_match('/^importAccountUser(.*)/', $userInfo['step'], $match) && isset($u
     }
 
     $account = json_decode($match[1], true);
-    $links = getConnectionLink($account['server_id'], $account['uuid'], $account['protocol'], $account['email'], $account['port'], $account['net'], $account['inbound_id']);
-    if(!is_array($links)) $links = [];
-    $vray_link = json_encode($links);
-    $token = getNewOrderToken($account['server_id'], getPanelServerType($account['server_id']), (object)['subId' => $account['sub_id']]);
-    $expire_date = $account['expiry'] > 0 ? intdiv($account['expiry'], 1000) : 2147000000;
-    if($expire_date > 2147483647) $expire_date = 2147000000;
-    $orderDate = time();
-    $customerIdText = (string)$customerId;
+    $account['customer'] = $customerId;
+    setUser('importAccountPlan' . json_encode($account, JSON_UNESCAPED_UNICODE));
 
-    $stmt = $connection->prepare("INSERT INTO `orders_list` 
-        (`userid`, `token`, `transid`, `fileid`, `server_id`, `inbound_id`, `remark`, `uuid`, `protocol`, `expire_date`, `link`, `amount`, `status`, `date`, `notif`, `rahgozar`)
-        VALUES (?, ?, '', 0, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, 0, 0)");
-    $stmt->bind_param("ssiisssisi", $customerIdText, $token, $account['server_id'], $account['inbound_id'], $account['email'], $account['uuid'], $account['protocol'], $expire_date, $vray_link, $orderDate);
-    $stmt->execute();
-    $stmt->close();
+    $detected = detectPlanForAccount($account);
+    if($detected){
+        $stmt = $connection->prepare("SELECT `title` FROM `server_categories` WHERE `id` = ?");
+        $stmt->bind_param("i", $detected['catid']);
+        $stmt->execute();
+        $detected['cat'] = $stmt->get_result()->fetch_assoc()['title'] ?? "";
+        $stmt->close();
+        sendMessage("🎯 | پلن این اکانت تشخیص داده شد:
 
-    setUser();
-    sendMessage("✅ | اکانت " . $account['email'] . " به لیست کانفیگ های مشتری " . $customerId . " اضافه شد", $removeKeyboard, null);
-    sendMessage("✅ یک سرویس جدید ( " . $account['email'] . " ) به لیست کانفیگ های شما اضافه شد", null, null, $customerId);
+📦 " . importPlanLabel($detected) . "
+
+درسته؟", json_encode(['inline_keyboard' => [
+            [['text' => "✅ بله، همین است", 'callback_data' => "importPlanPick" . $detected['id']]],
+            [['text' => "❌ نه، دستی انتخاب می‌کنم", 'callback_data' => "importPlanList0"]]
+        ]]), null);
+    }else{
+        sendMessage("🔎 | پلن این اکانت تشخیص داده نشد، پلن را دستی انتخاب کنید:", importPlanListKeys(0), null);
+    }
     exit();
+}
+/* plan of the imported account: confirm the detected one, pick another one, or none */
+if(preg_match('/^importAccountPlan(.*)/', $userInfo['step'], $stepMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(preg_match('/^importPlanList(\d+)/', $data ?? "", $match)){
+        editText($message_id, "📦 | پلن اکانت را انتخاب کنید:", importPlanListKeys((int)$match[1]));
+        exit();
+    }
+    if(preg_match('/^importPlanPick(\d+)/', $data ?? "", $match) || ($data ?? "") == "importPlanNone"){
+        $planId = isset($match[1]) ? (int)$match[1] : 0;
+        $account = json_decode($stepMatch[1], true);
+        importAccountOrder($account, $planId);
+        delMessage();
+        setUser();
+        sendMessage("✅ | اکانت " . $account['email'] . " به لیست کانفیگ های مشتری " . $account['customer'] . " اضافه شد", $removeKeyboard, null);
+        sendMessage("✅ یک سرویس جدید ( " . $account['email'] . " ) به لیست کانفیگ های شما اضافه شد", null, null, $account['customer']);
+        exit();
+    }
 }
 /* ---- days to wait before an expired account is deleted ( 0 = never ) ---- */
 if($data == "setAutoDeleteDays" && ($from_id == $admin || $userInfo['isAdmin'] == true)){

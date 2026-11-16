@@ -4589,12 +4589,86 @@ function findAccountBySubId($subId){
                     'net' => $stream->network ?? 'tcp',
                     'total' => (int)($client['totalGB'] ?? 0),
                     'expiry' => (int)($client['expiryTime'] ?? 0),
+                    'created' => (int)($client['created_at'] ?? 0),
                     'sub_id' => $subId
                 ];
             }
         }
     }
     return null;
+}
+
+
+/** best matching plan of an account that exists on the server: same inbound / volume / days. returns the plan row or null */
+function detectPlanForAccount($account){
+    global $connection;
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 1 AND `server_id` = ?");
+    $stmt->bind_param("i", $account['server_id']);
+    $stmt->execute();
+    $plans = $stmt->get_result();
+    $stmt->close();
+
+    $volumeGb = $account['total'] > 0 ? $account['total'] / 1073741824 : 0;
+    $days = null;
+    if($account['expiry'] > 0 && !empty($account['created']) && $account['expiry'] > $account['created']){
+        $days = round(($account['expiry'] - $account['created']) / 86400000);
+    }elseif($account['expiry'] <= 0 && $account['expiry'] == 0){
+        $days = 0;   // no time limit
+    }
+
+    $best = null; $bestScore = 0;
+    while($plan = $plans->fetch_assoc()){
+        if(abs($plan['volume'] - $volumeGb) > max(0.05, $volumeGb * 0.02)) continue;   // the volume has to be the same
+        $score = 1;
+        if($plan['inbound_id'] == $account['inbound_id']) $score += 4;
+        elseif($plan['inbound_id'] != 0) continue;                                      // a plan of another inbound
+        if($days !== null && abs($plan['days'] - $days) <= 1) $score += 2;
+        if($score > $bestScore){ $bestScore = $score; $best = $plan; }
+    }
+    return $best;
+}
+/** "category | plan title" */
+function importPlanLabel($plan){
+    return trim(($plan['cat'] ?? '') . " | " . $plan['title'], " |");
+}
+/** inline keyboard with every active plan ( 40 per page ) */
+function importPlanListKeys($page = 0){
+    global $connection, $buttonValues;
+    $perPage = 40;
+    $res = $connection->query("SELECT p.`id`, p.`title`, c.`title` AS cat FROM `server_plans` p LEFT JOIN `server_categories` c ON c.`id` = p.`catid` WHERE p.`active` = 1 ORDER BY p.`catid`, p.`id`");
+    $plans = $res->fetch_all(MYSQLI_ASSOC);
+    $pages = max(1, (int)ceil(count($plans) / $perPage));
+    $page = max(0, min((int)$page, $pages - 1));
+
+    $keys = [];
+    foreach(array_slice($plans, $page * $perPage, $perPage) as $plan){
+        $keys[] = [['text' => importPlanLabel($plan), 'callback_data' => "importPlanPick" . $plan['id']]];
+    }
+    $nav = [];
+    if($page > 0) $nav[] = ['text' => "◀️", 'callback_data' => "importPlanList" . ($page - 1)];
+    if($page < $pages - 1) $nav[] = ['text' => "▶️", 'callback_data' => "importPlanList" . ($page + 1)];
+    if(count($nav) > 0) $keys[] = $nav;
+    $keys[] = [['text' => "بدون پلن", 'callback_data' => "importPlanNone"]];
+    return json_encode(['inline_keyboard' => $keys]);
+}
+/** puts the server account into the list of the customer, linked to the chosen plan ( 0 = no plan ) */
+function importAccountOrder($account, $planId){
+    global $connection;
+    $customerId = (string)$account['customer'];
+    $links = getConnectionLink($account['server_id'], $account['uuid'], $account['protocol'], $account['email'], $account['port'], $account['net'], $account['inbound_id']);
+    if(!is_array($links)) $links = [];
+    $vray_link = json_encode($links);
+    $token = getNewOrderToken($account['server_id'], getPanelServerType($account['server_id']), (object)['subId' => $account['sub_id']]);
+    $expire_date = $account['expiry'] > 0 ? intdiv($account['expiry'], 1000) : 2147000000;
+    if($expire_date > 2147483647) $expire_date = 2147000000;
+    $orderDate = time();
+
+    $stmt = $connection->prepare("INSERT INTO `orders_list` 
+        (`userid`, `token`, `transid`, `fileid`, `server_id`, `inbound_id`, `remark`, `uuid`, `protocol`, `expire_date`, `link`, `amount`, `status`, `date`, `notif`, `rahgozar`)
+        VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, 0, 0)");
+    $stmt->bind_param("ssiiisssisi", $customerId, $token, $planId, $account['server_id'], $account['inbound_id'], $account['email'], $account['uuid'], $account['protocol'], $expire_date, $vray_link, $orderDate);
+    $stmt->execute();
+    $stmt->close();
 }
 
 function getAccountQrPayloads($link, $subLink){
