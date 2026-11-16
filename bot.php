@@ -283,6 +283,25 @@ if($userInfo['step'] == "setBackupChannel" && isset($update->message) && $text !
     sendMessage($mainValues['change_bot_settings_message'], getBotSettingKeys());
     exit();
 }
+if($data == "setBackupHours" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("⏱ | هر چند ساعت یک بار بکاپ گرفته شود؟
+
+▪️ یک عدد بین 1 تا 720 بفرستید ( مثلا 24 یعنی روزی یک بار )", $cancelKey, null);
+    setUser('setBackupHours');
+    exit();
+}
+if($userInfo['step'] == "setBackupHours" && isset($update->message) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(!ctype_digit(trim($text)) || (int)$text < 1 || (int)$text > 720){
+        sendMessage("⚠️ یک عدد صحیح بین 1 تا 720 بفرستید", null, null);
+        exit();
+    }
+    setSettings('backupHours', (int)$text);
+    setUser();
+    sendMessage("✅ از این به بعد هر " . (int)$text . " ساعت یک بار بکاپ گرفته میشود", $removeKeyboard);
+    sendMessage($mainValues['change_bot_settings_message'], getBotSettingKeys());
+    exit();
+}
 if($data == "backupNow" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     alert("⏳ در حال ساخت و ارسال بکاپ ...");
     list($backupOk, $backupMessage) = runDbBackup();
@@ -757,10 +776,15 @@ if($data=="inviteFriends"){
         $inviteAmount = number_format($stmt->get_result()->fetch_assoc()['value']??0) . " تومان";
         $stmt->close();
         
-        $getBotInfo = json_decode(file_get_contents("http://api.telegram.org/bot" . $botToken . "/getMe"),true);
-        $botId = $getBotInfo['result']['username'];
+        // https + curl ( the old plain http file_get_contents often fails and left the bot username empty )
+        $getBotInfo = bot('getMe');
+        $botId = is_object($getBotInfo) ? ($getBotInfo->result->username ?? "") : "";
+        if($botId == ""){
+            alert("خطا در ساخت لینک دعوت، چند لحظه بعد دوباره تلاش کنید");
+            exit();
+        }
         
-        $link = "t.me/$botId?start=" . $from_id;
+        $link = "https://t.me/$botId?start=" . $from_id;
         if($inviteText['type'] == "text"){
             $txt = str_replace('LINK',"<code>$link</code>",$inviteText['text']);
             $res = sendMessage($txt,null,"HTML");
@@ -6791,7 +6815,8 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
  * Everything (inbound, protocol, network, flow) is read from the panel,
  * the admin only types days + volume (+ price).
  * ------------------------------------------------------------------ */
-if($data == "addPanelPlan" and ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(($data == "addPanelPlan" || $data == "addPanelTestPlan") and ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    setUser($data == "addPanelTestPlan" ? 'panelPlanTest' : 'none');   // the step remembers that this is a test plan
     $apiUser = PANEL_API_TOKEN_USER;
     $stmt = $connection->prepare("SELECT si.`id`, si.`title` FROM `server_info` si JOIN `server_config` sc ON sc.`id` = si.`id` WHERE si.`active` = 1 AND sc.`username` = ?");
     $stmt->bind_param("s", $apiUser);
@@ -6807,7 +6832,7 @@ if($data == "addPanelPlan" and ($from_id == $admin || $userInfo['isAdmin'] == tr
     }
     $keys = array_chunk($keys, 2);
     $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "backplan"]];
-    editText($message_id, "⚡ سرور مورد نظر را انتخاب کنید:", json_encode(['inline_keyboard' => $keys]));
+    editText($message_id, $data == "addPanelTestPlan" ? "🎁 سرور پلن تست را انتخاب کنید:" : "⚡ سرور مورد نظر را انتخاب کنید:", json_encode(['inline_keyboard' => $keys]));
     exit();
 }
 if(preg_match('/^panelPlanServer(\d+)/',$data,$match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -6839,7 +6864,9 @@ if(preg_match('/^panelPlanServer(\d+)/',$data,$match) and ($from_id == $admin ||
 }
 if(preg_match('/^panelPlanInbound(\d+)_(\d+)/',$data,$match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    setUser('panelPlanDays' . json_encode(['server_id' => (int)$match[1], 'inbound_id' => (int)$match[2]]));
+    $planInit = ['server_id' => (int)$match[1], 'inbound_id' => (int)$match[2]];
+    if($userInfo['step'] == "panelPlanTest") $planInit['test'] = 1;
+    setUser('panelPlanDays' . json_encode($planInit));
     sendMessage("📅 | تعداد روز های اعتبار این پلن را وارد کنید ( 0 = بدون محدودیت زمان ):", $cancelKey);
     exit();
 }
@@ -6861,9 +6888,15 @@ if(preg_match('/^panelPlanVolume(.*)/',$userInfo['step'],$match) and $text != $b
     }
     $planData = json_decode($match[1], true);
     $planData['volume'] = $text + 0;
-    setUser('panelPlanPrice' . json_encode($planData));
-    sendMessage("💰 | قیمت پلن را به تومان وارد کنید:");
-    exit();
+    if(!empty($planData['test'])){
+        // a test plan is free: go straight on to the category with price 0
+        $userInfo['step'] = 'panelPlanPrice' . json_encode($planData);
+        $text = "0";
+    }else{
+        setUser('panelPlanPrice' . json_encode($planData));
+        sendMessage("💰 | قیمت پلن را به تومان وارد کنید:");
+        exit();
+    }
 }
 if(preg_match('/^panelPlanPrice(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(!is_numeric($text) || $text < 0){
@@ -6908,7 +6941,7 @@ if(preg_match('/^panelPlanCat(\d+)/',$data,$match) and preg_match('/^panelPlanCa
     $planNet = $streamInfo->network ?? "tcp";
     $planFlow = (($streamInfo->security ?? "") == "reality" && $planNet == "tcp" && $planProtocol == "vless") ? "xtls-rprx-vision" : "None";
 
-    $planTitle = ($planData['days'] == 0 ? "بدون محدودیت زمان" : $planData['days'] . " روزه") . " " . ($planData['volume'] == 0 ? "حجم نامحدود" : $planData['volume'] . " گیگ");
+    $planTitle = (!empty($planData['test']) ? "تست " : "") . ($planData['days'] == 0 ? "بدون محدودیت زمان" : $planData['days'] . " روزه") . " " . ($planData['volume'] == 0 ? "حجم نامحدود" : $planData['volume'] . " گیگ");
     $planDays = (float)$planData['days'];
     $planVolume = (float)$planData['volume'];
     $planCapacity = 100000;   // capacity of a shared inbound plan, decreases with every sale
@@ -6945,6 +6978,7 @@ if($data == 'backplan' and ($from_id == $admin || $userInfo['isAdmin'] == true))
     $keyboard = array_chunk($keyboard,2);
     $keyboard[] = [['text'=>"➖➖➖",'callback_data'=>"wizwizch"]];
     $keyboard[] = [['text'=>'⚡ افزودن پلن از پنل (3X-UI API)','callback_data'=>"addPanelPlan"]];
+    $keyboard[] = [['text'=>'🎁 افزودن پلن تست از پنل (3X-UI API)','callback_data'=>"addPanelTestPlan"]];
     $keyboard[] = [['text'=>'➕ افزودن پلن اختصاصی و اشتراکی','callback_data'=>"addNewPlan"]];
     $keyboard[] = [
         ['text'=>'➕ افزودن پلن رهگذر','callback_data'=>"addNewRahgozarPlan"],

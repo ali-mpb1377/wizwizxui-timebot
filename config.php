@@ -973,6 +973,7 @@ function getBotSettingKeys(){
     $qrSub = $botState['qrSubState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $backupBtn = ($botState['backupState'] ?? "off")=="on"?$buttonValues['on']:$buttonValues['off'];
     $backupChannelText = !empty($botState['backupChannel']) ? $botState['backupChannel'] : "پیوی ادمین";
+    $backupHoursText = (int)($botState['backupHours'] ?? 0) > 0 ? (int)$botState['backupHours'] : BACKUP_INTERVAL_HOURS;
     
     $requirePhone = $botState['requirePhone']=="on"?$buttonValues['on']:$buttonValues['off'];
     $requireIranPhone = $botState['requireIranPhone']=="on"?$buttonValues['on']:$buttonValues['off'];
@@ -1010,6 +1011,9 @@ function getBotSettingKeys(){
         [
             ['text'=>"📣 کانال بکاپ: " . $backupChannelText,'callback_data'=>"setBackupChannel"],
             ['text'=>"📤 بکاپ همین الان",'callback_data'=>"backupNow"]
+            ],
+        [
+            ['text'=>"⏱ فاصله بکاپ: هر " . $backupHoursText . " ساعت",'callback_data'=>"setBackupHours"]
             ],
         [
             ['text'=> $updateConnectionState,'callback_data'=>"changeUpdateConfigLinkState"],
@@ -5309,7 +5313,8 @@ function runDbBackup(){
 function runScheduledBackup(){
     global $botState, $connection, $admin;
     if(!isset($connection) || ($botState['backupState'] ?? "off") != "on") return;
-    $interval = BACKUP_INTERVAL_HOURS * 3600;
+    $hours = (int)($botState['backupHours'] ?? 0) > 0 ? (int)$botState['backupHours'] : BACKUP_INTERVAL_HOURS;
+    $interval = $hours * 3600;
     if(time() - (int)($botState['backupLast'] ?? 0) < $interval) return;
 
     // only one request makes the backup
@@ -5323,6 +5328,8 @@ function runScheduledBackup(){
     $stmt->close();
     if(is_array($fresh)){
         $botState = $fresh;
+        $hours = (int)($botState['backupHours'] ?? 0) > 0 ? (int)$botState['backupHours'] : BACKUP_INTERVAL_HOURS;
+        $interval = $hours * 3600;
         if(($botState['backupState'] ?? "off") != "on" || time() - (int)($botState['backupLast'] ?? 0) < $interval){
             $connection->query("SELECT RELEASE_LOCK('wizwiz_backup')");
             return;
