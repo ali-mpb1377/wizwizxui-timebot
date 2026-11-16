@@ -295,7 +295,7 @@ function getMainKeys(){
             [['text'=>$buttonValues['individual_existence'],'callback_data'=>"availableServers2"]]:[]
         ),
         [['text'=>$buttonValues['application_links'],'callback_data'=>"reciveApplications"],['text'=>$buttonValues['my_tickets'],'callback_data'=>"supportSection"]],
-        (($botState['searchState']=="on" || $from_id == $admin || $userInfo['isAdmin'] == true)?
+        (($from_id == $admin || $userInfo['isAdmin'] == true)?
             [['text'=>$buttonValues['search_config'],'callback_data'=>"showUUIDLeft"]]
             :[]),
     ]);
@@ -973,6 +973,8 @@ function getBotSettingKeys(){
     $qrSub = $botState['qrSubState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $backupBtn = ($botState['backupState'] ?? "off")=="on"?$buttonValues['on']:$buttonValues['off'];
     $backupChannelText = !empty($botState['backupChannel']) ? $botState['backupChannel'] : "پیوی ادمین";
+    $autoDeleteDays = isset($botState['autoDeleteDays']) ? (int)$botState['autoDeleteDays'] : 2;
+    $autoDeleteText = $autoDeleteDays > 0 ? $autoDeleteDays . " روز" : "خاموش";
     $backupHoursText = (int)($botState['backupHours'] ?? 0) > 0 ? (int)$botState['backupHours'] : BACKUP_INTERVAL_HOURS;
     
     $requirePhone = $botState['requirePhone']=="on"?$buttonValues['on']:$buttonValues['off'];
@@ -1088,8 +1090,7 @@ function getBotSettingKeys(){
             ['text'=>"لینک کانفیگ",'callback_data'=>"wizwizch"]
         ],
         [
-            ['text'=>$searchState,'callback_data'=>"changeBotsearchState"],
-            ['text'=>"مشخصات کانفیگ",'callback_data'=>"wizwizch"]
+            ['text'=>"🗑 حذف خودکار بعد از انقضا: " . $autoDeleteText,'callback_data'=>"setAutoDeleteDays"]
         ],
         [
             ['text'=>$renewConfigLink,'callback_data'=>"changeBotrenewConfigLinkState"],
@@ -4558,6 +4559,42 @@ function saveBotTextOverride($type, $key, $value){
     }
     $stmt->execute();
     $stmt->close();
+}
+
+
+/**
+ * Finds the client of a 3x-ui server by its subscription id ( the last part of the sub link ).
+ * returns the data needed to add it to the bot, or null
+ */
+function findAccountBySubId($subId){
+    global $connection;
+    $servers = $connection->query("SELECT sc.`id`, sc.`type`, si.`title` FROM `server_config` sc LEFT JOIN `server_info` si ON si.`id` = sc.`id` WHERE sc.`type` != 'marzban'");
+    while($server = $servers->fetch_assoc()){
+        $list = getJson($server['id']);
+        if(!is_object($list) || empty($list->success) || !is_array($list->obj)) continue;
+        foreach($list->obj as $row){
+            if(!in_array($row->protocol, ['vless', 'vmess', 'trojan'])) continue;
+            $settings = json_decode((string)$row->settings, true);
+            foreach(($settings['clients'] ?? []) as $client){
+                if(($client['subId'] ?? null) !== $subId) continue;
+                $stream = json_decode((string)$row->streamSettings);
+                return [
+                    'server_id' => (int)$server['id'],
+                    'server' => $server['title'] ?? ('#' . $server['id']),
+                    'inbound_id' => (int)$row->id,
+                    'uuid' => $row->protocol == 'trojan' ? ($client['password'] ?? '') : ($client['id'] ?? ''),
+                    'email' => $client['email'] ?? '',
+                    'protocol' => $row->protocol,
+                    'port' => $row->port,
+                    'net' => $stream->network ?? 'tcp',
+                    'total' => (int)($client['totalGB'] ?? 0),
+                    'expiry' => (int)($client['expiryTime'] ?? 0),
+                    'sub_id' => $subId
+                ];
+            }
+        }
+    }
+    return null;
 }
 
 function getAccountQrPayloads($link, $subLink){

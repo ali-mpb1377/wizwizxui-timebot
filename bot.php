@@ -5960,10 +5960,112 @@ if(preg_match('/^releaseRejectedAgent(\d+)/',$data,$match) && ($from_id == $admi
         editText($message_id,"لیست کاربران رد شده از نمایندگی",$keys);
     }else editText($message_id,"کاربری یافت نشد",json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"managePanel"]]]]));
 }
-if($data=="showUUIDLeft" && ($botState['searchState']=="on" || $from_id== $admin)){
+/* ---- add an account that exists on the server but not in the bot to a customer ---- */
+if($data=="showUUIDLeft" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage($mainValues['send_config_uuid'],$cancelKey);
-    setUser('showAccount');
+    sendMessage("🔗 | لینک ساب اکانتی که روی سرور هست ولی توی ربات نیست رو بفرست
+
+▪️ فقط اکانت های سرور 3X-UI پشتیبانی میشه", $cancelKey, null);
+    setUser('importAccountSub');
+    exit();
+}
+if($userInfo['step'] == "importAccountSub" && isset($update->message) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $raw = trim($text);
+    $subId = $raw;
+    if(preg_match('#^https?://#i', $raw)) $subId = basename(rtrim((string)parse_url($raw, PHP_URL_PATH), '/'));
+    $subId = urldecode($subId);
+    if(!preg_match('/^[A-Za-z0-9_.\-]{3,100}$/', $subId)){
+        sendMessage("⚠️ | لینک ساب معتبر نیست، دوباره بفرست", null, null);
+        exit();
+    }
+    sendMessage($mainValues['please_wait_message'], null, null);
+    $account = findAccountBySubId($subId);
+    if(!$account){
+        sendMessage("❌ | اکانتی با این لینک ساب روی سرورها پیدا نشد", null, null);
+        exit();
+    }
+    $stmt = $connection->prepare("SELECT `userid` FROM `orders_list` WHERE `uuid` = ? AND `server_id` = ?");
+    $stmt->bind_param("si", $account['uuid'], $account['server_id']);
+    $stmt->execute();
+    $owner = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if($owner){
+        sendMessage("⚠️ | این اکانت از قبل توی لیست کاربر " . $owner['userid'] . " هست", $removeKeyboard, null);
+        setUser();
+        exit();
+    }
+    $totalText = $account['total'] > 0 ? sumerize($account['total']) : "نامحدود";
+    $expiryText = $account['expiry'] > 0 ? jdate("Y-m-d H:i", intdiv($account['expiry'], 1000)) : "نامحدود";
+    setUser('importAccountUser' . json_encode($account, JSON_UNESCAPED_UNICODE));
+    sendMessage("✅ | اکانت پیدا شد
+
+🔮 نام: " . $account['email'] . "
+🌍 سرور: " . $account['server'] . "
+📡 پروتکل: " . $account['protocol'] . "
+🔋 حجم: " . $totalText . "
+⏰ انقضا: " . $expiryText . "
+
+👤 حالا آیدی عددی مشتری رو بفرست:", $cancelKey, null);
+    exit();
+}
+if(preg_match('/^importAccountUser(.*)/', $userInfo['step'], $match) && isset($update->message) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(!ctype_digit(trim($text))){
+        sendMessage($mainValues['send_only_number']);
+        exit();
+    }
+    $customerId = (int)trim($text);
+    $stmt = $connection->prepare("SELECT `userid` FROM `users` WHERE `userid` = ?");
+    $stmt->bind_param("i", $customerId);
+    $stmt->execute();
+    $customer = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$customer){
+        sendMessage("❌ | کاربری با این آیدی توی ربات نیست ( مشتری باید یک بار ربات رو استارت کرده باشه )", null, null);
+        exit();
+    }
+
+    $account = json_decode($match[1], true);
+    $links = getConnectionLink($account['server_id'], $account['uuid'], $account['protocol'], $account['email'], $account['port'], $account['net'], $account['inbound_id']);
+    if(!is_array($links)) $links = [];
+    $vray_link = json_encode($links);
+    $token = getNewOrderToken($account['server_id'], getPanelServerType($account['server_id']), (object)['subId' => $account['sub_id']]);
+    $expire_date = $account['expiry'] > 0 ? intdiv($account['expiry'], 1000) : 2147000000;
+    if($expire_date > 2147483647) $expire_date = 2147000000;
+    $orderDate = time();
+    $customerIdText = (string)$customerId;
+
+    $stmt = $connection->prepare("INSERT INTO `orders_list` 
+        (`userid`, `token`, `transid`, `fileid`, `server_id`, `inbound_id`, `remark`, `uuid`, `protocol`, `expire_date`, `link`, `amount`, `status`, `date`, `notif`, `rahgozar`)
+        VALUES (?, ?, '', 0, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, 0, 0)");
+    $stmt->bind_param("ssiisssisi", $customerIdText, $token, $account['server_id'], $account['inbound_id'], $account['email'], $account['uuid'], $account['protocol'], $expire_date, $vray_link, $orderDate);
+    $stmt->execute();
+    $stmt->close();
+
+    setUser();
+    sendMessage("✅ | اکانت " . $account['email'] . " به لیست کانفیگ های مشتری " . $customerId . " اضافه شد", $removeKeyboard, null);
+    sendMessage("✅ یک سرویس جدید ( " . $account['email'] . " ) به لیست کانفیگ های شما اضافه شد", null, null, $customerId);
+    exit();
+}
+/* ---- days to wait before an expired account is deleted ( 0 = never ) ---- */
+if($data == "setAutoDeleteDays" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("🗑 | اکانت های منقضی یا تمام شده بعد از چند روز خودکار حذف شوند؟
+
+▪️ یک عدد بفرستید ( مثلا 10 یعنی 10 روز بعد از انقضا )
+▪️ برای خاموش کردن حذف خودکار 0 بفرستید", $cancelKey, null);
+    setUser('setAutoDeleteDays');
+    exit();
+}
+if($userInfo['step'] == "setAutoDeleteDays" && isset($update->message) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(!ctype_digit(trim($text)) || (int)$text > 365){
+        sendMessage("⚠️ یک عدد صحیح بین 0 تا 365 بفرستید", null, null);
+        exit();
+    }
+    setSettings('autoDeleteDays', (int)$text);
+    setUser();
+    sendMessage((int)$text > 0 ? "✅ اکانت های منقضی بعد از " . (int)$text . " روز خودکار حذف میشن" : "✅ حذف خودکار خاموش شد", $removeKeyboard);
+    sendMessage($mainValues['change_bot_settings_message'], getBotSettingKeys());
+    exit();
 }
 if($userInfo['step'] == "showAccount" and $text != $buttonValues['cancel']){
     if(preg_match('/^vmess:\/\/(.*)/',$text,$match)){

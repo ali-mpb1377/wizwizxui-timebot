@@ -113,12 +113,16 @@ if($orders){
                     $stmt->close();
                 }
             }elseif(!$enable){
-                $newTIme = $time + 86400 * 2;
+                // days to keep an expired / depleted account before it is deleted ( bot settings ), 0 = never delete
+                $autoDeleteDays = isset($botState['autoDeleteDays']) ? (int)$botState['autoDeleteDays'] : 2;
+                if($autoDeleteDays > 0){
+                    $newTIme = $time + 86400 * $autoDeleteDays;
 
-                $stmt = $connection->prepare("UPDATE `orders_list` SET `notif`= ? WHERE `uuid`=?");
-                $stmt->bind_param("is", $newTIme, $uuid);
-                $stmt->execute();
-                $stmt->close();
+                    $stmt = $connection->prepare("UPDATE `orders_list` SET `notif`= ? WHERE `uuid`=?");
+                    $stmt->bind_param("is", $newTIme, $uuid);
+                    $stmt->execute();
+                    $stmt->close();
+                }
             }
         }
         file_put_contents("warnOffset.txt", $warnOffset + $limit);
