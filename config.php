@@ -971,6 +971,8 @@ function getBotSettingKeys(){
     $agencyPlanDiscount = $botState['agencyPlanDiscount']=="on"?$buttonValues['plan_discount']:$buttonValues['server_discount'];
     $qrConfig = $botState['qrConfigState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $qrSub = $botState['qrSubState']=="on"?$buttonValues['on']:$buttonValues['off'];
+    $backupBtn = ($botState['backupState'] ?? "off")=="on"?$buttonValues['on']:$buttonValues['off'];
+    $backupChannelText = !empty($botState['backupChannel']) ? $botState['backupChannel'] : "پیوی ادمین";
     
     $requirePhone = $botState['requirePhone']=="on"?$buttonValues['on']:$buttonValues['off'];
     $requireIranPhone = $botState['requireIranPhone']=="on"?$buttonValues['on']:$buttonValues['off'];
@@ -1000,6 +1002,14 @@ function getBotSettingKeys(){
     return json_encode(['inline_keyboard'=>[
         [
             ['text'=>"🎗 بنر بازاریابی 🎗",'callback_data'=>"inviteSetting"]
+            ],
+        [
+            ['text'=> $backupBtn,'callback_data'=>"changeBotbackupState"],
+            ['text'=>"💾 بکاپ دیتابیس",'callback_data'=>"wizwizch"]
+            ],
+        [
+            ['text'=>"📣 کانال بکاپ: " . $backupChannelText,'callback_data'=>"setBackupChannel"],
+            ['text'=>"📤 بکاپ همین الان",'callback_data'=>"backupNow"]
             ],
         [
             ['text'=> $updateConnectionState,'callback_data'=>"changeUpdateConfigLinkState"],
@@ -5221,5 +5231,117 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
     if(is_object($response)) $response->subId = $subId;
     return $response;
 }
+
+/* ------------------------------------------------------------------
+ * Database backup to a telegram channel ( bot settings -> backup )
+ * ------------------------------------------------------------------ */
+if(!defined('BACKUP_INTERVAL_HOURS')) define('BACKUP_INTERVAL_HOURS', 6);
+
+/** writes a gzipped SQL dump of the whole database ( pure php, no mysqldump needed ) */
+function createDbBackupFile($path){
+    global $connection;
+    $gz = gzopen($path, 'w9');
+    if(!$gz) throw new \Exception("can not write " . $path);
+    gzwrite($gz, "-- wizwiz backup " . date('c') . "\nSET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\n\n");
+
+    $tables = [];
+    $res = $connection->query("SHOW TABLES");
+    while($row = $res->fetch_row()) $tables[] = $row[0];
+    $res->free();
+
+    foreach($tables as $table){
+        $create = $connection->query("SHOW CREATE TABLE `" . $table . "`")->fetch_row();
+        if(!isset($create[1])) continue;   // a view
+        gzwrite($gz, "DROP TABLE IF EXISTS `$table`;\n" . $create[1] . ";\n\n");
+
+        $rows = $connection->query("SELECT * FROM `" . $table . "`", MYSQLI_USE_RESULT);
+        while($row = $rows->fetch_assoc()){
+            $values = [];
+            foreach($row as $v) $values[] = is_null($v) ? "NULL" : "'" . $connection->real_escape_string($v) . "'";
+            gzwrite($gz, "INSERT INTO `$table` VALUES (" . implode(",", $values) . ");\n");
+        }
+        $rows->free();
+        gzwrite($gz, "\n");
+    }
+    gzclose($gz);
+}
+/** sendDocument with the file uploaded to telegram */
+function botUploadDocument($chatId, $filePath, $caption = null){
+    global $botToken;
+    $fields = ['chat_id' => $chatId, 'document' => new CURLFile($filePath, 'application/gzip', basename($filePath))];
+    if($caption !== null) $fields['caption'] = $caption;
+    $ch = curl_init("https://api.telegram.org/bot" . $botToken . "/sendDocument");
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 300);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
+    $res = curl_exec($ch);
+    if(curl_error($ch)) error_log("botUploadDocument: " . curl_error($ch));
+    curl_close($ch);
+    return json_decode((string)$res);
+}
+/** makes a backup now and sends it to the backup channel ( or to the admin when no channel is set ). returns [ok, message] */
+function runDbBackup(){
+    global $botState, $admin;
+    @set_time_limit(0);
+    @ignore_user_abort(true);
+
+    $target = !empty($botState['backupChannel']) ? $botState['backupChannel'] : $admin;
+    $file = sys_get_temp_dir() . "/wizwiz_" . date('Y-m-d_H-i-s') . ".sql.gz";
+    try{
+        createDbBackupFile($file);
+        $size = filesize($file);
+        if($size > 49 * 1024 * 1024){
+            @unlink($file);
+            return [false, "حجم فایل بکاپ از ۴۹ مگابایت بیشتر است و تلگرام قبول نمی‌کند"];
+        }
+        $caption = "💾 بکاپ ربات\n📅 " . date('Y-m-d H:i') . "\n📦 " . round($size / 1024) . " KB";
+        $res = botUploadDocument($target, $file, $caption);
+        @unlink($file);
+        if(is_object($res) && !empty($res->ok)) return [true, "ok"];
+        return [false, is_object($res) ? ($res->description ?? "unknown") : "no answer from telegram"];
+    }catch(\Throwable $e){
+        @unlink($file);
+        return [false, $e->getMessage()];
+    }
+}
+/** runs after every request: sends the periodic backup when it is on and due */
+function runScheduledBackup(){
+    global $botState, $connection, $admin;
+    if(!isset($connection) || ($botState['backupState'] ?? "off") != "on") return;
+    $interval = BACKUP_INTERVAL_HOURS * 3600;
+    if(time() - (int)($botState['backupLast'] ?? 0) < $interval) return;
+
+    // only one request makes the backup
+    $lock = $connection->query("SELECT GET_LOCK('wizwiz_backup', 0)")->fetch_row();
+    if(!$lock || $lock[0] != 1) return;
+
+    // the settings may have changed since this request started
+    $stmt = $connection->prepare("SELECT `value` FROM `setting` WHERE `type` = 'BOT_STATES'");
+    $stmt->execute();
+    $fresh = json_decode((string)($stmt->get_result()->fetch_assoc()['value'] ?? ''), true);
+    $stmt->close();
+    if(is_array($fresh)){
+        $botState = $fresh;
+        if(($botState['backupState'] ?? "off") != "on" || time() - (int)($botState['backupLast'] ?? 0) < $interval){
+            $connection->query("SELECT RELEASE_LOCK('wizwiz_backup')");
+            return;
+        }
+    }
+
+    if(function_exists('fastcgi_finish_request')) @fastcgi_finish_request();   // the user / cron already got the answer
+
+    setSettings('backupLast', time());
+    list($ok, $message) = runDbBackup();
+    if(!$ok){
+        setSettings('backupLast', time() - $interval + 600);   // try again in 10 minutes
+        if(time() - (int)($botState['backupErrorNotified'] ?? 0) > 3600){
+            setSettings('backupErrorNotified', time());
+            bot('sendMessage', ['chat_id' => $admin, 'text' => "⚠️ بکاپ خودکار ارسال نشد:\n" . $message . "\n\nمطمئن شوید ربات در کانال بکاپ ادمین است."]);
+        }
+    }
+    $connection->query("SELECT RELEASE_LOCK('wizwiz_backup')");
+}
+register_shutdown_function('runScheduledBackup');
 
 ?>

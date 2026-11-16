@@ -246,6 +246,53 @@ if($userInfo['step'] == "addNewAdmin" && $from_id === $admin && $text != $button
         sendMessage($mainValues['send_only_number']);
     }
 }
+/* ---- database backup: channel address + manual backup ---- */
+if($data == "setBackupChannel" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("📣 | آدرس کانال بکاپ را بفرستید
+
+▪️ مثل @mychannel یا آیدی عددی کانال ( مثل -1001234567890 )
+▪️ ربات باید در کانال ادمین باشد ( دسترسی ارسال پیام )
+▪️ کانال را خصوصی نگه دارید، چون بکاپ شامل اطلاعات کاربران و سرورهاست
+▪️ برای برگشتن به ارسال بکاپ در پیوی خودتان یک - بفرستید", $cancelKey, null);
+    setUser('setBackupChannel');
+    exit();
+}
+if($userInfo['step'] == "setBackupChannel" && isset($update->message) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $channel = preg_replace('#^https?://t\.me/#i', '', trim($text));
+    if($channel == "-"){
+        setSettings('backupChannel', '');
+    }else{
+        if(preg_match('/^-?\d+$/', $channel)){
+            // numeric id
+        }elseif(preg_match('/^@?[A-Za-z][A-Za-z0-9_]{4,}$/', $channel)){
+            $channel = "@" . ltrim($channel, "@");
+        }else{
+            sendMessage("⚠️ آدرس معتبر نیست، @نام_کانال یا آیدی عددی را بفرستید", null, null);
+            exit();
+        }
+        $test = bot('sendMessage', ['chat_id' => $channel, 'text' => "✅ کانال بکاپ ربات تنظیم شد"]);
+        if(!is_object($test) || empty($test->ok)){
+            sendMessage("⚠️ ارسال پیام به این کانال ممکن نشد: " . (is_object($test) ? ($test->description ?? "") : "") . "\n\nربات را در کانال ادمین کنید و دوباره آدرس را بفرستید", null, null);
+            exit();
+        }
+        setSettings('backupChannel', $channel);
+    }
+    setUser();
+    sendMessage("✅ ذخیره شد", $removeKeyboard);
+    sendMessage($mainValues['change_bot_settings_message'], getBotSettingKeys());
+    exit();
+}
+if($data == "backupNow" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    alert("⏳ در حال ساخت و ارسال بکاپ ...");
+    list($backupOk, $backupMessage) = runDbBackup();
+    if($backupOk){
+        setSettings('backupLast', time());
+        sendMessage("✅ بکاپ ارسال شد", null, null);
+    }else sendMessage("⚠️ ارسال بکاپ ناموفق بود:\n" . $backupMessage, null, null);
+    exit();
+}
+
 if(($data=="botSettings" or preg_match("/^changeBot(\w+)/",$data,$match)) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if($data!="botSettings"){
         if($match[1] == "cartToCartAutoAcceptType") $newValue = $botState[$match[1]] == "0"?"1":($botState[$match[1]] == "1"?"2":0);
