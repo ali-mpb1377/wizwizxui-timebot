@@ -10,44 +10,45 @@ $rewaredChannel = $botState['rewardChannel'];
 if($rewaredTime>0 && $rewaredChannel != null){
     $lastTime = $botState['lastRewardMessage']??0;
     if(time() > $lastTime){
-        $time = time() - ($rewaredTime * 60 * 60);
-        
-        $stmt = $connection->prepare("SELECT SUM(price) as total FROM `pays` WHERE `request_date` > ? AND (`state` = 'paid' OR `state` = 'approved')");
-        $stmt->bind_param("i", $time);
+        $since = time() - ($rewaredTime * 60 * 60);
+
+        // income, number of payments and sold accounts of the period ( the report is sent even when everything is 0 )
+        $stmt = $connection->prepare("SELECT SUM(price) AS total, COUNT(*) AS cnt FROM `pays` WHERE `request_date` > ? AND (`state` = 'paid' OR `state` = 'approved')");
+        $stmt->bind_param("i", $since);
         $stmt->execute();
-        $totalRewards = number_format($stmt->get_result()->fetch_assoc()['total']);
+        $payRow = $stmt->get_result()->fetch_assoc();
         $stmt->close();
-        
-        $botState['lastRewardMessage']=time() + ($rewaredTime * 60 * 60);
-        
-        $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'BOT_STATES'");
+        $totalRewards = number_format((int)($payRow['total'] ?? 0));
+        $payCount = (int)($payRow['cnt'] ?? 0);
+
+        $stmt = $connection->prepare("SELECT COUNT(*) AS cnt FROM `orders_list` WHERE `date` > ? AND `status` = 1");
+        $stmt->bind_param("i", $since);
         $stmt->execute();
-        $isExists = $stmt->get_result();
-        $stmt->close();
-        if($isExists->num_rows>0) $query = "UPDATE `setting` SET `value` = ? WHERE `type` = 'BOT_STATES'";
-        else $query = "INSERT INTO `setting` (`type`, `value`) VALUES ('BOT_STATES', ?)";
-        $newData = json_encode($botState);
-        
-        $stmt = $connection->prepare($query);
-        $stmt->bind_param("s", $newData);
-        $stmt->execute();
+        $orderCount = (int)($stmt->get_result()->fetch_assoc()['cnt'] ?? 0);
         $stmt->close();
 
         $txt = "⁮⁮ ⁮⁮ ⁮⁮ ⁮⁮
 🔰درآمد من در $rewaredTime ساعت گذشته
 
 💰مبلغ : $totalRewards تومان
+🧾 تعداد پرداخت موفق : $payCount
+📦 تعداد سرویس فروخته شده : $orderCount
 
 ☑️ $channelLock
 
 ";
         $sent = sendMessage($txt, null, null, $rewaredChannel);
-        if(!is_object($sent) || empty($sent->ok)){
-            // tell the admin why the report did not reach the channel
-            sendMessage("⚠️ گزارش درآمد به کانال ارسال نشد ( " . $rewaredChannel . " )\n" . (is_object($sent) ? ($sent->description ?? "") : "") . "\n\nربات باید در کانال ادمین باشد و دسترسی ارسال پیام داشته باشد", null, null, $admin);
+        if(is_object($sent) && !empty($sent->ok)){
+            setSettings('lastRewardMessage', time() + ($rewaredTime * 60 * 60));   // next report
+        }else{
+            setSettings('lastRewardMessage', time() + 600);                       // not sent: try again in 10 minutes
+            if(time() - (int)($botState['rewardErrorNotified'] ?? 0) > 3600){
+                setSettings('rewardErrorNotified', time());
+                sendMessage("⚠️ گزارش درآمد به کانال ارسال نشد ( " . $rewaredChannel . " )\n" . (is_object($sent) ? ($sent->description ?? "") : "") . "\n\nربات باید در کانال ادمین باشد و دسترسی ارسال پیام داشته باشد", null, null, $admin);
+            }
         }
     }
-}    
+}
 
 if($botState['cartToCartAutoAcceptState']=="on"){
     $date = strtotime("-" . ($botState['cartToCartAutoAcceptTime']??10) . " minutes");

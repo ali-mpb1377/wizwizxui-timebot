@@ -5387,9 +5387,9 @@ if(!defined('BACKUP_INTERVAL_HOURS')) define('BACKUP_INTERVAL_HOURS', 6);
 /** writes a gzipped SQL dump of the whole database ( pure php, no mysqldump needed ) */
 function createDbBackupFile($path){
     global $connection;
-    $gz = gzopen($path, 'w9');
-    if(!$gz) throw new \Exception("can not write " . $path);
-    gzwrite($gz, "-- wizwiz backup " . date('c') . "\nSET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\n\n");
+    $fp = fopen($path, 'w');
+    if(!$fp) throw new \Exception("can not write " . $path);
+    fwrite($fp, "-- wizwiz backup " . date('c') . "\nSET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\n\n");
 
     $tables = [];
     $res = $connection->query("SHOW TABLES");
@@ -5399,23 +5399,34 @@ function createDbBackupFile($path){
     foreach($tables as $table){
         $create = $connection->query("SHOW CREATE TABLE `" . $table . "`")->fetch_row();
         if(!isset($create[1])) continue;   // a view
-        gzwrite($gz, "DROP TABLE IF EXISTS `$table`;\n" . $create[1] . ";\n\n");
+        fwrite($fp, "DROP TABLE IF EXISTS `$table`;\n" . $create[1] . ";\n\n");
 
         $rows = $connection->query("SELECT * FROM `" . $table . "`", MYSQLI_USE_RESULT);
         while($row = $rows->fetch_assoc()){
             $values = [];
             foreach($row as $v) $values[] = is_null($v) ? "NULL" : "'" . $connection->real_escape_string($v) . "'";
-            gzwrite($gz, "INSERT INTO `$table` VALUES (" . implode(",", $values) . ");\n");
+            fwrite($fp, "INSERT INTO `$table` VALUES (" . implode(",", $values) . ");\n");
         }
         $rows->free();
-        gzwrite($gz, "\n");
+        fwrite($fp, "\n");
     }
-    gzclose($gz);
+    fclose($fp);
+}
+/** gzip a file ( used only when the plain .sql is too big for telegram ) */
+function gzipBackupFile($path){
+    $gzPath = $path . ".gz";
+    $in = fopen($path, 'rb');
+    $out = gzopen($gzPath, 'w9');
+    while(!feof($in)) gzwrite($out, fread($in, 1048576));
+    fclose($in);
+    gzclose($out);
+    @unlink($path);
+    return $gzPath;
 }
 /** sendDocument with the file uploaded to telegram */
 function botUploadDocument($chatId, $filePath, $caption = null){
     global $botToken;
-    $fields = ['chat_id' => $chatId, 'document' => new CURLFile($filePath, 'application/gzip', basename($filePath))];
+    $fields = ['chat_id' => $chatId, 'document' => new CURLFile($filePath, 'application/octet-stream', basename($filePath))];
     if($caption !== null) $fields['caption'] = $caption;
     $ch = curl_init("https://api.telegram.org/bot" . $botToken . "/sendDocument");
     curl_setopt($ch, CURLOPT_POST, true);
@@ -5434,9 +5445,10 @@ function runDbBackup(){
     @ignore_user_abort(true);
 
     $target = !empty($botState['backupChannel']) ? $botState['backupChannel'] : $admin;
-    $file = sys_get_temp_dir() . "/wizwiz_" . date('Y-m-d_H-i-s') . ".sql.gz";
+    $file = sys_get_temp_dir() . "/wizwiz_" . date('Y-m-d_H-i-s') . ".sql";
     try{
         createDbBackupFile($file);
+        if(filesize($file) > 45 * 1024 * 1024) $file = gzipBackupFile($file);   // telegram accepts 50 MB: send it compressed
         $size = filesize($file);
         if($size > 49 * 1024 * 1024){
             @unlink($file);

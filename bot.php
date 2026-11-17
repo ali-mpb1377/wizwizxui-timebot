@@ -759,6 +759,7 @@ if(preg_match('/^edit(RewaredTime|cartToCartAutoAcceptTime)/', $userInfo['step']
     }
     
     setSettings(lcfirst($match[1]), $text);
+    if($match[1] == "RewaredTime") setSettings('lastRewardMessage', 0);   // the next cron run sends a report right away
     sendMessage($mainValues['change_bot_settings_message'],getBotSettingKeys());
     setUser();
     exit();
@@ -1143,6 +1144,7 @@ if($userInfo['step'] == "editRewardChannel" && ($from_id == $admin || $userInfo[
                     continue;
                 }
                 setSettings('rewardChannel', (string)$candidate);
+                setSettings('lastRewardMessage', 0);   // send the first report right away
                 sendMessage($mainValues['change_bot_settings_message'],getGateWaysKeys());
                 setUser();
                 exit();
