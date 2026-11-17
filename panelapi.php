@@ -350,6 +350,7 @@ function panelApiClientsRoute($op, $p, $data, $server_id = null){
             $settings = is_array($data) && isset($data['settings']) ? json_decode($data['settings'], true) : null;
             $client = $settings['clients'][0] ?? null;
             if(!$client || empty($p['clientId'])) return null;
+            if(!empty($client['group'])) panelApiEnsureGroup($server_id, $client['group']);   // a renewal moves the client to a group
             $email = !empty($p['email']) ? $p['email'] : panelApiEmailByUuid($server_id, $p['clientId']);
             if(!$email) return null;
             return ['POST', '/panel/api/clients/update/' . $enc($email), json_encode($client)];

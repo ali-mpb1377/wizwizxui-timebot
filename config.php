@@ -2298,7 +2298,8 @@ function editInboundTraffic($server_id, $uuid, $volume, $days, $editType = null)
 
     if($volume != 0){
         $leftGB = $total - $up - $down;
-        $extend_volume = floor($volume * 1073741824);
+        $carryGb = ($editType == "renew") ? renewCarryGb($total, $up + $down) : 0;
+        $extend_volume = floor(($volume + $carryGb) * 1073741824);
         if($editType == "renew"){
             $total = $extend_volume;
             $up = 0;
@@ -2589,6 +2590,18 @@ function editClientRemark($server_id, $inbound_id, $uuid, $newRemark){
     }
     return $response;
 }
+
+/**
+ * Volume that is carried over when an account is renewed:
+ * less than half a GB left = 0, otherwise the rest is rounded to the nearest whole GB and added to the plan volume.
+ */
+function renewCarryGb($totalBytes, $usedBytes){
+    if(!is_numeric($totalBytes) || $totalBytes <= 0) return 0;   // it was unlimited: nothing to carry
+    $leftGb = ($totalBytes - $usedBytes) / 1073741824;
+    if($leftGb <= 0) return 0;
+    return (int)round($leftGb);                                  // 0.3 -> 0 , 0.7 -> 1 , 2.6 -> 3
+}
+
 function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $editType = null){
     global $connection;
     $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
@@ -2627,7 +2640,8 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
     }
     if($volume != 0){
         $client_total = $settings['clients'][$client_key]['totalGB'];// - $up - $down;
-        $extend_volume = floor($volume * 1073741824);
+        $carryGb = ($editType == "renew") ? renewCarryGb($total ?? 0, ($up ?? 0) + ($down ?? 0)) : 0;   // what is left of the old volume
+        $extend_volume = floor(($volume + $carryGb) * 1073741824);
         $volume = ($client_total > 0) ? $client_total + $extend_volume : $extend_volume;
         if($editType == "renew"){
             $volume = $extend_volume;
@@ -2649,6 +2663,8 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
         if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
         if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
     }
+    // after a renewal the account goes to the group of the buyer: Robot, or the group of the agent
+    if($editType == "renew") $settings['clients'][$client_key]['group'] = panelApiClientGroup();
     $editedClient = $settings['clients'][$client_key];
     $settings['clients'] = array_values($settings['clients']);
     $settings = json_encode($settings);
@@ -4180,7 +4196,7 @@ function editMarzbanConfig($server_id,$info){
     
     if(isset($info['plus_volume'])) $volume += $info['plus_volume'] * 1073741824;
     elseif(isset($info['volume'])){
-        $volume = $info['volume'] * 1073741824;
+        $volume = ($info['volume'] + renewCarryGb($configInfo->data_limit ?? 0, $configInfo->used_traffic ?? 0)) * 1073741824;
         $response = resetMarzbanTraffic($server_id, $remark, $token);
         
         if(!$response->success) return $response;
@@ -4663,10 +4679,26 @@ function importAccountOrder($account, $planId){
     if($expire_date > 2147483647) $expire_date = 2147000000;
     $orderDate = time();
 
+    // like a real purchase: the price of the plan ( so renew / increase buttons show ) and the agent flag of the customer
+    $amount = 0;
+    if($planId > 0){
+        $stmt = $connection->prepare("SELECT `price` FROM `server_plans` WHERE `id` = ?");
+        $stmt->bind_param("i", $planId);
+        $stmt->execute();
+        $amount = (int)($stmt->get_result()->fetch_assoc()['price'] ?? 0);
+        $stmt->close();
+    }
+    $agentBought = 0;
+    $stmt = $connection->prepare("SELECT `is_agent` FROM `users` WHERE `userid` = ?");
+    $stmt->bind_param("s", $customerId);
+    $stmt->execute();
+    if(($stmt->get_result()->fetch_assoc()['is_agent'] ?? 0) == 1) $agentBought = 1;
+    $stmt->close();
+
     $stmt = $connection->prepare("INSERT INTO `orders_list` 
-        (`userid`, `token`, `transid`, `fileid`, `server_id`, `inbound_id`, `remark`, `uuid`, `protocol`, `expire_date`, `link`, `amount`, `status`, `date`, `notif`, `rahgozar`)
-        VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, 0, 0)");
-    $stmt->bind_param("ssiiisssisi", $customerId, $token, $planId, $account['server_id'], $account['inbound_id'], $account['email'], $account['uuid'], $account['protocol'], $expire_date, $vray_link, $orderDate);
+        (`userid`, `token`, `transid`, `fileid`, `server_id`, `inbound_id`, `remark`, `uuid`, `protocol`, `expire_date`, `link`, `amount`, `status`, `date`, `notif`, `rahgozar`, `agent_bought`)
+        VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, 0, ?)");
+    $stmt->bind_param("ssiiisssisiii", $customerId, $token, $planId, $account['server_id'], $account['inbound_id'], $account['email'], $account['uuid'], $account['protocol'], $expire_date, $vray_link, $amount, $orderDate, $agentBought);
     $stmt->execute();
     $stmt->close();
 }
