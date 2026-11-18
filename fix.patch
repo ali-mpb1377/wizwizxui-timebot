@@ -1,0 +1,60 @@
+diff -ru a/settings/rewardReport.php b/settings/rewardReport.php
+--- a/settings/rewardReport.php	2026-11-18 12:53:32.432876179 +0000
++++ b/settings/rewardReport.php	2026-11-18 12:53:32.489407899 +0000
+@@ -178,10 +178,10 @@
+             $portType = $serverConfig['port_type'];
+             $panelUrl = $serverConfig['panel_url'];
+             $stmt->close();
+-            include '../phpqrcode/qrlib.php';
++            include_once '../phpqrcode/qrlib.php';
+         
+-            define('IMAGE_WIDTH',540);
+-            define('IMAGE_HEIGHT',540);
++            if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH',540);
++            if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
+             for($i = 1; $i <= $accountCount; $i++){
+                 $uniqid = generateRandomString(42,$protocol);
+                 
+@@ -314,12 +314,12 @@
+                 $stmt->close();
+             }
+             
+-            if($userInfo['refered_by'] != null){
++            if($userinfo['refered_by'] != null){
+                 $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'INVITE_BANNER_AMOUNT'");
+                 $stmt->execute();
+                 $inviteAmount = $stmt->get_result()->fetch_assoc()['value']??0;
+                 $stmt->close();
+-                $inviterId = $userInfo['refered_by'];
++                $inviterId = $userinfo['refered_by'];
+                 
+                 $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` + ? WHERE `userid` = ?");
+                 $stmt->bind_param("ii", $inviteAmount, $inviterId);
+diff -ru a/settings/tronChecker.php b/settings/tronChecker.php
+--- a/settings/tronChecker.php	2026-11-18 12:53:32.432954980 +0000
++++ b/settings/tronChecker.php	2026-11-18 12:53:32.491028252 +0000
+@@ -115,9 +115,9 @@
+                     $portType = $serverConfig['port_type'];
+                     $panelUrl = $serverConfig['panel_url'];
+                     $stmt->close();
+-                    include '../phpqrcode/qrlib.php';
+-                    define('IMAGE_WIDTH',540);
+-                    define('IMAGE_HEIGHT',540);
++                    include_once '../phpqrcode/qrlib.php';
++                    if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH',540);
++                    if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
+                     sendMessage("پرداخت شما با تکسید آیدی $hash_id با موفقیت انجام شد 🚀 | 😍 در حال ارسال کانفیگ به تلگرام شما ...",null,null,$user_id);
+ 
+                     for($i =1; $i<= $accountCount; $i++){
+diff -ru a/wizwiz.sh b/wizwiz.sh
+--- a/wizwiz.sh	2026-11-18 12:53:32.433062619 +0000
++++ b/wizwiz.sh	2026-11-18 12:53:32.491497841 +0000
+@@ -188,7 +188,7 @@
+ # update cron
+ PATHS=$(cat /root/confwizwiz/dbrootwizwiz.txt | grep '$path' | cut -d"'" -f2)
+ (crontab -l ; echo "* * * * * curl https://${DOMAIN_NAME}/wizwizxui-timebot/settings/messagewizwiz.php >/dev/null 2>&1") | sort - | uniq - | crontab -
+-(crontab -l ; echo "* * * * * curl https://${DOMAIN_NAME}/wizwizxui-timebot/settings/rewardReport.php >/dev/null 2>&1") | sort - | uniq - | crontab -
++(crontab -l ; echo "* * * * * cd /var/www/html/wizwizxui-timebot/settings && sudo -u www-data php rewardReport.php >> /var/log/rewardreport.log 2>&1") | sort - | uniq - | crontab -
+ (crontab -l ; echo "* * * * * curl https://${DOMAIN_NAME}/wizwizxui-timebot/settings/warnusers.php >/dev/null 2>&1") | sort - | uniq - | crontab -
+ (crontab -l ; echo "* * * * * curl https://${DOMAIN_NAME}/wizwizxui-timebot/settings/gift2all.php >/dev/null 2>&1") | sort - | uniq - | crontab -
+ (crontab -l ; echo "*/3 * * * * curl https://${DOMAIN_NAME}/wizwizxui-timebot/settings/tronChecker.php >/dev/null 2>&1") | sort - | uniq - | crontab -

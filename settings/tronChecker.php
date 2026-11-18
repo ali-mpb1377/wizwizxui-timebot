@@ -115,9 +115,9 @@ while($payParam = $paysList->fetch_assoc()){
                     $portType = $serverConfig['port_type'];
                     $panelUrl = $serverConfig['panel_url'];
                     $stmt->close();
-                    include '../phpqrcode/qrlib.php';
-                    define('IMAGE_WIDTH',540);
-                    define('IMAGE_HEIGHT',540);
+                    include_once '../phpqrcode/qrlib.php';
+                    if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH',540);
+                    if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
                     sendMessage("پرداخت شما با تکسید آیدی $hash_id با موفقیت انجام شد 🚀 | 😍 در حال ارسال کانفیگ به تلگرام شما ...",null,null,$user_id);
 
                     for($i =1; $i<= $accountCount; $i++){

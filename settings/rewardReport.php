@@ -178,10 +178,10 @@ if($botState['cartToCartAutoAcceptState']=="on"){
             $portType = $serverConfig['port_type'];
             $panelUrl = $serverConfig['panel_url'];
             $stmt->close();
-            include '../phpqrcode/qrlib.php';
+            include_once '../phpqrcode/qrlib.php';
         
-            define('IMAGE_WIDTH',540);
-            define('IMAGE_HEIGHT',540);
+            if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH',540);
+            if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
             for($i = 1; $i <= $accountCount; $i++){
                 $uniqid = generateRandomString(42,$protocol);
                 
@@ -314,12 +314,12 @@ if($botState['cartToCartAutoAcceptState']=="on"){
                 $stmt->close();
             }
             
-            if($userInfo['refered_by'] != null){
+            if($userinfo['refered_by'] != null){
                 $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'INVITE_BANNER_AMOUNT'");
                 $stmt->execute();
                 $inviteAmount = $stmt->get_result()->fetch_assoc()['value']??0;
                 $stmt->close();
-                $inviterId = $userInfo['refered_by'];
+                $inviterId = $userinfo['refered_by'];
                 
                 $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` + ? WHERE `userid` = ?");
                 $stmt->bind_param("ii", $inviteAmount, $inviterId);
