@@ -328,7 +328,7 @@ while($payParam = $paysList->fetch_assoc()){
                     $stmt->execute();
                     $order = $stmt->get_result()->fetch_assoc();
                     $stmt->close();
-                    $fid = $order['fileid'];
+                    $fid = renewPlanId($payParam, $order);
                     $remark = $order['remark'];
                     $uuid = $order['uuid']??"0";
                     $server_id = $order['server_id'];
@@ -371,6 +371,7 @@ while($payParam = $paysList->fetch_assoc()){
                         sendMessage("✅ مبلغ " . number_format($price) . " تومان ($tronPrice ترون) به کیف پول کاربر $user_id اضافه شد، میخواست کانفیگش رو تمدید کنه، ولی اتصال به سرور برقرار نبود",null,null,$admin);
                 		exit;
                 	}
+                	applyRenewPlanChange($oid, $fid);
                 	$stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
                 	$newExpire = $days == 0 ? 2147000000 : $time + $days * 86400;
                 	$stmt->bind_param("ii", $newExpire, $oid);

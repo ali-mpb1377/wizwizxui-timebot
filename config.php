@@ -973,6 +973,7 @@ function getBotSettingKeys(){
     $qrSub = $botState['qrSubState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $backupBtn = ($botState['backupState'] ?? "off")=="on"?$buttonValues['on']:$buttonValues['off'];
     $backupChannelText = !empty($botState['backupChannel']) ? $botState['backupChannel'] : "پیوی ادمین";
+    $renewChangePlanBtn = ($botState['renewChangePlanState'] ?? "off")=="on"?$buttonValues['on']:$buttonValues['off'];
     $autoDeleteDays = isset($botState['autoDeleteDays']) ? (int)$botState['autoDeleteDays'] : 2;
     $autoDeleteText = $autoDeleteDays > 0 ? $autoDeleteDays . " روز" : "خاموش";
     $backupHoursText = (int)($botState['backupHours'] ?? 0) > 0 ? (int)$botState['backupHours'] : BACKUP_INTERVAL_HOURS;
@@ -1091,6 +1092,10 @@ function getBotSettingKeys(){
         ],
         [
             ['text'=>"🗑 حذف خودکار بعد از انقضا: " . $autoDeleteText,'callback_data'=>"setAutoDeleteDays"]
+        ],
+        [
+            ['text'=> $renewChangePlanBtn,'callback_data'=>"changeBotrenewChangePlanState"],
+            ['text'=>"🔄 تغییر پلن موقع تمدید",'callback_data'=>"wizwizch"]
         ],
         [
             ['text'=>$renewConfigLink,'callback_data'=>"changeBotrenewConfigLinkState"],
@@ -2014,6 +2019,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                 if(count($temp)>0) array_push($keyboard, $temp);
     
             }
+            $enableBool = ($enable == true);
             $enable = $enable == true? $buttonValues['active']:$buttonValues['deactive'];
         }else $enable = $mainValues['config_doesnt_exist'];
 
@@ -2035,6 +2041,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
             if($botState['increaseVolumeState']=="on" && ($price != 0 || $agentBought == true)) $extrakey[] = ['text' => $buttonValues['increase_config_volume'], 'callback_data' => "increaseAVolume{$id}"];
             if($botState['increaseTimeState']=="on" && ($price != 0 || $agentBought == true)) $extrakey[] = ['text' => $buttonValues['increase_config_days'], 'callback_data' => "increaseADay{$id}"];
             $keyboard[] = $extrakey;
+            $keyboard[] = [['text' => ($enableBool ? "🔴 خاموش کردن کانفیگ" : "🟢 روشن کردن کانفیگ"), 'callback_data' => "userToggleConfig" . $id]];
             
              
             if($botState['renewConfigLinkState'] == "on" && $botState['updateConfigLinkState'] == "on") $keyboard[] = [['text'=>$buttonValues['renew_connection_link'],'callback_data'=>'changAccountConnectionLink' . $id],['text'=>$buttonValues['update_config_connection'],'callback_data'=>'updateConfigConnectionLink' . $id]];
@@ -2311,8 +2318,17 @@ function editInboundTraffic($server_id, $uuid, $volume, $days, $editType = null)
         else $total = ($leftGB > 0) ? $total + $extend_volume : $extend_volume;
     }
 
+    // after a renewal the client inside the inbound has to be on again too
+    $inboundSettings = $row->settings;
+    if($editType == "renew"){
+        $decodedSettings = json_decode($row->settings, true);
+        if(isset($decodedSettings['clients'][0])){
+            $decodedSettings['clients'][0]['enable'] = true;
+            $inboundSettings = json_encode($decodedSettings, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        }
+    }
     $dataArr = array('up' => $up,'down' => $down,'total' => is_null($total) ? $row->total : $total,'remark' => $row->remark,'enable' => 'true',
-        'expiryTime' => is_null($expire_microdate) ? $row->expiryTime : $expire_microdate, 'listen' => '','port' => $row->port,'protocol' => $row->protocol,'settings' => $row->settings,
+        'expiryTime' => is_null($expire_microdate) ? $row->expiryTime : $expire_microdate, 'listen' => '','port' => $row->port,'protocol' => $row->protocol,'settings' => $inboundSettings,
         'streamSettings' => $row->streamSettings, 'sniffing' => $row->sniffing);
 
 
@@ -2638,6 +2654,7 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
             }
         }
     }
+    $oldExpiryMs = (int)($settings['clients'][$client_key]['expiryTime'] ?? 0);   // before any change ( to know if the panel switched it off because it was finished )
     if($volume != 0){
         $client_total = $settings['clients'][$client_key]['totalGB'];// - $up - $down;
         $carryGb = ($editType == "renew") ? renewCarryGb($total ?? 0, ($up ?? 0) + ($down ?? 0)) : 0;   // what is left of the old volume
@@ -2665,6 +2682,19 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
     }
     // after a renewal the account goes to the group of the buyer: Robot, or the group of the agent
     if($editType == "renew") $settings['clients'][$client_key]['group'] = panelApiClientGroup();
+
+    // the panel switches an expired / finished account off: a renewal must switch it on again
+    if($editType == "renew"){
+        $settings['clients'][$client_key]['enable'] = true;
+    }elseif(isset($enable) && !$enable){
+        // volume / time added to an account that was switched off because it was finished: switch it on if it is fine now
+        $nowMs = floor(microtime(true) * 1000);
+        $wasFinished = ($oldExpiryMs > 0 && $oldExpiryMs < $nowMs) || (($total ?? 0) > 0 && (($up ?? 0) + ($down ?? 0)) >= $total);
+        $newExpiryMs = (int)($settings['clients'][$client_key]['expiryTime'] ?? 0);
+        $newTotal = (int)($settings['clients'][$client_key]['totalGB'] ?? 0);
+        $stillFinished = ($newExpiryMs > 0 && $newExpiryMs < $nowMs) || ($newTotal > 0 && (($up ?? 0) + ($down ?? 0)) >= $newTotal && $editType != "renew");
+        if($wasFinished && !$stillFinished) $settings['clients'][$client_key]['enable'] = true;
+    }
     $editedClient = $settings['clients'][$client_key];
     $settings['clients'] = array_values($settings['clients']);
     $settings = json_encode($settings);
@@ -4701,6 +4731,109 @@ function importAccountOrder($account, $planId){
     $stmt->bind_param("ssiiisssisiii", $customerId, $token, $planId, $account['server_id'], $account['inbound_id'], $account['email'], $account['uuid'], $account['protocol'], $expire_date, $vray_link, $amount, $orderDate, $agentBought);
     $stmt->execute();
     $stmt->close();
+}
+
+
+/* ------------------------------------------------------------------
+ * Renewal with a different plan
+ * ------------------------------------------------------------------ */
+/** price of a plan for this buyer ( agent discount included ) */
+function renewPlanPrice($plan, $order, $userInfo){
+    global $botState;
+    $price = (int)$plan['price'];
+    if($order['agent_bought'] == 1){
+        $discounts = json_decode((string)($userInfo['discount_percent'] ?? ''), true) ?: [];
+        if(($botState['agencyPlanDiscount'] ?? "") == "on") $discount = $discounts['plans'][$plan['id']] ?? ($discounts['normal'] ?? 0);
+        else $discount = $discounts['servers'][$order['server_id']] ?? ($discounts['normal'] ?? 0);
+        $price -= floor($price * $discount / 100);
+    }
+    return $price;
+}
+/** the plans an account can be renewed with: same server and the same kind of inbound, not the current plan, not free */
+function getRenewPlanOptions($order){
+    global $connection;
+    $serverId = (int)$order['server_id'];
+    $inboundId = (int)$order['inbound_id'];
+    $rahgozar = (int)$order['rahgozar'];
+    $current = (int)$order['fileid'];
+    $stmt = $connection->prepare("SELECT p.*, c.`title` AS cat FROM `server_plans` p LEFT JOIN `server_categories` c ON c.`id` = p.`catid`
+        WHERE p.`active` = 1 AND p.`price` > 0 AND p.`server_id` = ? AND p.`rahgozar` = ? AND p.`id` != ?
+        AND ((? = 0 AND p.`inbound_id` = 0) OR (? > 0 AND p.`inbound_id` = ?))
+        ORDER BY p.`catid`, p.`price`");
+    $stmt->bind_param("iiiiii", $serverId, $rahgozar, $current, $inboundId, $inboundId, $inboundId);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+    return $rows;
+}
+/** the plan a renewal payment is for: the plan chosen when asking to renew ( stored in pays.volume ) or the plan of the order */
+function renewPlanId($payInfo, $order){
+    global $connection;
+    $chosen = (int)($payInfo['volume'] ?? 0);
+    if($chosen > 0 && $chosen != (int)$order['fileid']){
+        $stmt = $connection->prepare("SELECT `id` FROM `server_plans` WHERE `id` = ? AND `active` = 1 AND `server_id` = ?");
+        $stmt->bind_param("ii", $chosen, $order['server_id']);
+        $stmt->execute();
+        $found = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if($found) return $chosen;
+    }
+    return $order['fileid'];
+}
+/** after a successful renewal: the order now belongs to the plan it was renewed with */
+function applyRenewPlanChange($orderId, $planId){
+    global $connection;
+    $stmt = $connection->prepare("UPDATE `orders_list` SET `fileid` = ?, `amount` = (SELECT `price` FROM `server_plans` WHERE `id` = ?) WHERE `id` = ? AND `fileid` != ?");
+    $stmt->bind_param("iiii", $planId, $planId, $orderId, $planId);
+    $stmt->execute();
+    $stmt->close();
+}
+
+/** current state of an account on its server: found, enable, total ( bytes ), used ( bytes ), expiry ( ms ) */
+function getAccountPanelState($order){
+    $server_id = $order['server_id'];
+    $inbound_id = (int)$order['inbound_id'];
+    $uuid = $order['uuid'] ?? "0";
+    $state = ['found' => false, 'enable' => false, 'total' => 0, 'used' => 0, 'expiry' => 0];
+
+    if(getPanelServerType($server_id) == "marzban"){
+        $info = getMarzbanUser($server_id, $order['remark']);
+        if(isset($info->username)){
+            $state = ['found' => true, 'enable' => $info->status == "active", 'total' => (int)$info->data_limit, 'used' => (int)$info->used_traffic, 'expiry' => (int)$info->expire * 1000];
+        }
+        return $state;
+    }
+    $list = getJson($server_id);
+    if(!is_object($list) || !is_array($list->obj)) return $state;
+    foreach($list->obj as $row){
+        $settings = json_decode((string)$row->settings);
+        $clients = $settings->clients ?? [];
+        if($inbound_id == 0){
+            if(($clients[0]->id ?? null) == $uuid || ($clients[0]->password ?? null) == $uuid){
+                $state = ['found' => true, 'enable' => (bool)$row->enable && ($clients[0]->enable ?? true), 'total' => (int)$row->total, 'used' => (int)$row->up + (int)$row->down, 'expiry' => (int)$row->expiryTime];
+                foreach(($row->clientStats ?? []) as $stat){
+                    if(is_object($stat) && ($stat->email ?? null) == ($clients[0]->email ?? "")){
+                        if((int)$stat->total != 0 || (int)$stat->expiryTime != 0){
+                            $state['total'] = (int)$stat->total; $state['used'] = (int)$stat->up + (int)$stat->down; $state['expiry'] = (int)$stat->expiryTime;
+                        }
+                    }
+                }
+                return $state;
+            }
+        }elseif($row->id == $inbound_id){
+            foreach($clients as $client){
+                if(($client->id ?? null) == $uuid || ($client->password ?? null) == $uuid){
+                    foreach(($row->clientStats ?? []) as $stat){
+                        if(is_object($stat) && ($stat->email ?? null) == ($client->email ?? "")){
+                            return ['found' => true, 'enable' => (bool)$stat->enable && ($client->enable ?? true), 'total' => (int)$stat->total, 'used' => (int)$stat->up + (int)$stat->down, 'expiry' => (int)$stat->expiryTime];
+                        }
+                    }
+                    return ['found' => true, 'enable' => (bool)($client->enable ?? true), 'total' => (int)($client->totalGB ?? 0), 'used' => 0, 'expiry' => (int)($client->expiryTime ?? 0)];
+                }
+            }
+        }
+    }
+    return $state;
 }
 
 function getAccountQrPayloads($link, $subLink){

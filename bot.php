@@ -1993,7 +1993,7 @@ if($botState['subLinkState'] == "on") $acc_text .= "
         $stmt->execute();
         $order = $stmt->get_result()->fetch_assoc();
         $stmt->close();
-        $fid = $order['fileid'];
+        $fid = renewPlanId($payInfo, $order);   // the plan chosen with "change plan", or the plan of the order
         $remark = $order['remark'];
         $uuid = $order['uuid']??"0";
         $server_id = $order['server_id'];
@@ -2031,6 +2031,7 @@ if($botState['subLinkState'] == "on") $acc_text .= "
         	alert('🔻مشکل فنی در اتصال به سرور. لطفا به مدیریت اطلاع بدید',true);
         	exit;
         }
+        applyRenewPlanChange($oid, $fid);
         $stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
         $newExpire = $days == 0 ? 2147000000 : $time + $days * 86400;
         $stmt->bind_param("ii", $newExpire, $oid);
@@ -7983,6 +7984,81 @@ if(preg_match('/changeAccProtocol(\d+)_(\d+)_(.*)/', $data,$match)){
     $keys = getOrderDetailKeys($from_id, $oid);
     editText($message_id, $keys['msg'], $keys['keyboard'],"HTML");
 }
+/* ---- the user switches his account off / on ---- */
+if(preg_match('/^userToggleConfig(\d+)/', $data ?? "", $match)){
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ? AND `userid` = ?");
+    $stmt->bind_param("is", $match[1], $from_id);
+    $stmt->execute();
+    $order = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$order){ alert($mainValues['config_not_found'], true); exit(); }
+
+    $state = getAccountPanelState($order);
+    if(!$state['found']){ alert($mainValues['config_not_found'], true); exit(); }
+    if(!$state['enable']){
+        // an expired or finished account can not be switched on, it has to be renewed
+        $nowMs = floor(microtime(true) * 1000);
+        $finished = ($state['expiry'] > 0 && $state['expiry'] < $nowMs) || ($state['total'] > 0 && $state['used'] >= $state['total']);
+        if($finished){
+            alert("⚠️ این سرویس منقضی یا تمام شده، برای روشن شدن باید تمدید شود", true);
+            exit();
+        }
+    }
+    if($order['inbound_id'] == 0){
+        if(getPanelServerType($order['server_id']) == "marzban") $toggle = changeMarzbanState($order['server_id'], $order['remark']);
+        else $toggle = changeInboundState($order['server_id'], $order['uuid']);
+    }else $toggle = changeClientState($order['server_id'], $order['inbound_id'], $order['uuid']);
+
+    if(is_object($toggle) && !empty($toggle->success)){
+        alert($state['enable'] ? "🔴 کانفیگ خاموش شد" : "🟢 کانفیگ روشن شد");
+        $keys = getOrderDetailKeys($from_id, $order['id']);
+        if($keys != null) editText($message_id, $keys['msg'], $keys['keyboard'], "HTML");
+    }else{
+        alert("⚠️ تغییر وضعیت انجام نشد، دوباره تلاش کنید", true);
+    }
+    exit();
+}
+/* ---- renewal: the same plan or another plan ( bot settings ) ---- */
+if(preg_match('/^renewAccount(\d+)/', $data ?? "", $renewMatch) && ($botState['renewChangePlanState'] ?? "off") == "on"){
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ?");
+    $stmt->bind_param("i", $renewMatch[1]);
+    $stmt->execute();
+    $renewOrder = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if($renewOrder && count(getRenewPlanOptions($renewOrder)) > 0){
+        delMessage();
+        sendMessage("🔄 | می‌خواهید همین پلن تمدید شود یا پلن را تغییر دهید؟", json_encode(['inline_keyboard' => [
+            [['text' => "♻️ تمدید همین پلن", 'callback_data' => "renewSame" . $renewMatch[1]]],
+            [['text' => "🔄 تغییر پلن", 'callback_data' => "renewChangePlan" . $renewMatch[1]]],
+            [['text' => $buttonValues['cancel'], 'callback_data' => "mainMenu"]]
+        ]]));
+        exit();
+    }
+}
+if(preg_match('/^renewChangePlan(\d+)/', $data ?? "", $renewMatch)){
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ?");
+    $stmt->bind_param("i", $renewMatch[1]);
+    $stmt->execute();
+    $renewOrder = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    $options = $renewOrder ? getRenewPlanOptions($renewOrder) : [];
+    if(count($options) == 0){ alert("پلن دیگری برای این سرویس وجود ندارد", true); exit(); }
+
+    $keys = [];
+    foreach(array_slice($options, 0, 90) as $plan){
+        $label = trim(($plan['cat'] ?? "") . " | " . $plan['title'], " |") . " - " . number_format(renewPlanPrice($plan, $renewOrder, $userInfo)) . " تومان";
+        $keys[] = [['text' => $label, 'callback_data' => "renewPick" . $renewMatch[1] . "_" . $plan['id']]];
+    }
+    $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "renewAccount" . $renewMatch[1]]];
+    delMessage();
+    sendMessage("🔄 | پلن جدید را انتخاب کنید:", json_encode(['inline_keyboard' => $keys]));
+    exit();
+}
+if(preg_match('/^renewSame(\d+)/', $data ?? "", $renewMatch)) $data = "renewAccount" . $renewMatch[1];
+if(preg_match('/^renewPick(\d+)_(\d+)/', $data ?? "", $renewMatch)){
+    $renewChosenPlan = (int)$renewMatch[2];
+    $data = "renewAccount" . $renewMatch[1];
+}
 if(preg_match('/^discountRenew(\d+)_(\d+)/',$userInfo['step'], $match) || preg_match('/renewAccount(\d+)/',$data,$match) && $text != $buttonValues['cancel']){
     if(preg_match('/^discountRenew/', $userInfo['step'])){
         $rowId = $match[2];
@@ -8067,6 +8143,8 @@ if(preg_match('/^discountRenew(\d+)_(\d+)/',$userInfo['step'], $match) || preg_m
     $serverId = $order['server_id'];
     $fid = $order['fileid'];
     $agentBought = $order['agent_bought'];
+    // a plan chosen with "change plan" ( only plans that are allowed for this account )
+    if(isset($renewChosenPlan) && $renewChosenPlan != $fid && in_array($renewChosenPlan, array_column(getRenewPlanOptions($order), 'id'))) $fid = $renewChosenPlan;
     
     
     $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id` = ? AND `active` = 1");
@@ -8090,8 +8168,9 @@ if(preg_match('/^discountRenew(\d+)_(\d+)/',$userInfo['step'], $match) || preg_m
         
         $time = time();
         $stmt = $connection->prepare("INSERT INTO `pays` (`hash_id`, `user_id`, `type`, `plan_id`, `volume`, `day`, `price`, `request_date`, `state`)
-                                    VALUES (?, ?, 'RENEW_ACCOUNT', ?, '0', '0', ?, ?, 'pending')");
-        $stmt->bind_param("siiii", $hash_id, $from_id, $oid, $price, $time);
+                                    VALUES (?, ?, 'RENEW_ACCOUNT', ?, ?, '0', ?, ?, 'pending')");
+        $chosenPlanColumn = ($fid != $order['fileid']) ? (int)$fid : 0;   // pays.volume keeps the chosen plan of a renewal
+        $stmt->bind_param("siiiii", $hash_id, $from_id, $oid, $chosenPlanColumn, $price, $time);
         $stmt->execute();
         $rowId = $stmt->insert_id;
         $stmt->close();
@@ -8114,7 +8193,7 @@ if(preg_match('/^discountRenew(\d+)_(\d+)/',$userInfo['step'], $match) || preg_m
 
 
 
-    sendMessage("لطفا با یکی از روش های زیر اکانت خود را تمدید کنید :",json_encode([
+    sendMessage(($fid != $order['fileid'] ? "📦 پلن انتخابی: " . $respd['title'] . "\n\n" : "") . "لطفا با یکی از روش های زیر اکانت خود را تمدید کنید :",json_encode([
             'inline_keyboard' => $keyboard
         ]));
 }
@@ -8168,7 +8247,7 @@ if(preg_match('/payRenewWithCartToCart(.*)/',$userInfo['step'],$match) and $text
         $stmt->execute();
         $order = $stmt->get_result()->fetch_assoc();
         $stmt->close();
-        $fid = $order['fileid'];
+        $fid = renewPlanId($payInfo, $order);   // the plan chosen with "change plan", or the plan of the order
         $remark = $order['remark'];
         $uid = $order['userid'];
         $userName = $userInfo['username'];
@@ -8233,7 +8312,7 @@ if(preg_match('/approveRenewAcc(.*)/',$data,$match) && ($from_id == $admin || $u
     $stmt->execute();
     $order = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-    $fid = $order['fileid'];
+    $fid = renewPlanId($payInfo, $order);   // the plan chosen with "change plan", or the plan of the order
     $remark = $order['remark'];
     $uuid = $order['uuid']??"0";
     $server_id = $order['server_id'];
@@ -8279,6 +8358,7 @@ if(preg_match('/approveRenewAcc(.*)/',$data,$match) && ($from_id == $admin || $u
 		alert('🔻مشکل فنی در اتصال به سرور. لطفا به مدیریت اطلاع بدید',true);
 		exit;
 	}
+	applyRenewPlanChange($oid, $fid);
 	$stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
 	$newExpire = $days == 0 ? 2147000000 : $time + $days * 86400;
 	$stmt->bind_param("ii", $newExpire, $oid);
@@ -8308,7 +8388,7 @@ if(preg_match('/decRenewAcc(.*)/',$data,$match) && ($from_id == $admin || $userI
     $stmt->execute();
     $order = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-    $fid = $order['fileid'];
+    $fid = renewPlanId($payInfo, $order);   // the plan chosen with "change plan", or the plan of the order
     $remark = $order['remark'];
     $server_id = $order['server_id'];
     $inbound_id = $order['inbound_id'];
@@ -8371,7 +8451,7 @@ if(preg_match('/payRenewWithWallet(.*)/', $data,$match)){
     }
     $order = $order->fetch_assoc();
     
-    $fid = $order['fileid'];
+    $fid = renewPlanId($payInfo, $order);   // the plan chosen with "change plan", or the plan of the order
     $remark = $order['remark'];
     $uuid = $order['uuid']??"0";
     $server_id = $order['server_id'];
@@ -8418,6 +8498,7 @@ if(preg_match('/payRenewWithWallet(.*)/', $data,$match)){
 		alert('🔻مشکل فنی در اتصال به سرور. لطفا به مدیریت اطلاع بدید',true);
 		exit;
 	}
+	applyRenewPlanChange($oid, $fid);
 	$stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
 	$newExpire = $days == 0 ? 2147000000 : $time + $days * 86400;
 	$stmt->bind_param("ii", $newExpire, $oid);
