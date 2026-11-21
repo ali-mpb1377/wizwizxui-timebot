@@ -1478,11 +1478,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
             $vray_link = json_encode($vraylink);
         }
         foreach($vraylink as $link){
-            $acc_text = "
-    
-        🔮 $remark \n " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"<code>$link</code>":"");
-            if($botState['subLinkState'] == "on") $acc_text .= 
-            " \n🌐 subscription : <code>$subLink</code>";
+            $acc_text = buildAccountText($protocol, $remark, $volume, $days, $link, $subLink, $serverType, ($serverType != "marzban" && isset($response) && is_object($response)) ? ($response->subId ?? "") : "");
         
             sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
         }
@@ -1917,24 +1913,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
             $vray_link = json_encode($vraylink);
         }
         foreach($vraylink as $link){
-        $acc_text = "
-        
-😍 سفارش جدید شما
-📡 پروتکل: $protocol
-🔮 نام سرویس: $remark
-🔋حجم سرویس: $volume گیگ
-⏰ مدت سرویس: " . daysLabel($days) . "⁮⁮ ⁮⁮
-" . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
-💝 config : <code>$link</code>":"");
-
-if($botState['subLinkState'] == "on") $acc_text .= "
-
-
-
-
-🌐 subscription : <code>$subLink</code>
-        
-        ";
+        $acc_text = buildAccountText($protocol, $remark, $volume, $days, $link, $subLink, $serverType, ($serverType != "marzban" && isset($response) && is_object($response)) ? ($response->subId ?? "") : "");
               
             sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
         }
@@ -3165,20 +3144,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
     foreach($vraylink as $link){
-        $acc_text = "
-😍 سفارش جدید شما
-📡 پروتکل: $protocol
-🔮 نام سرویس: $remark
-🔋حجم سرویس: $volume گیگ
-⏰ مدت سرویس: " . daysLabel($days) . "⁮⁮ ⁮⁮
-" . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
-💝 config : <code>$link</code>":"");
-if($botState['subLinkState'] == "on") $acc_text .= "
-
-
-
-
-🌐 subscription : <code>$subLink</code>"; 
+        $acc_text = buildAccountText($protocol, $remark, $volume, $days, $link, $subLink, $serverType, ($serverType != "marzban" && isset($response) && is_object($response)) ? ($response->subId ?? "") : ""); 
     
         sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
     }
@@ -3520,19 +3486,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     define('IMAGE_HEIGHT',540);
 
     foreach($vraylink as $vray_link){
-        $acc_text = "
-😍 سفارش جدید شما
-📡 پروتکل: $protocol
-🔮 نام سرویس: $remark
-🔋حجم سرویس: $volume گیگ
-⏰ مدت سرویس: " . daysLabel($days) . "⁮⁮ ⁮⁮
-" . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
-💝 config : <code>$vray_link</code>":"");
-if($botState['subLinkState'] == "on") $acc_text .= "
-
-
-
-\n🌐 subscription : <code>$subLink</code>";
+        $acc_text = buildAccountText($protocol, $remark, $volume, $days, $vray_link, $subLink, $serverType, ($serverType != "marzban" && isset($response) && is_object($response)) ? ($response->subId ?? "") : "");
     
         sendAccountQr(getAccountQrPayloads($vray_link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
     }
@@ -3827,19 +3781,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
             }
 
             foreach($vraylink as $link){
-                $acc_text = "
-😍 سفارش جدید شما
-📡 پروتکل: $protocol
-🔮 نام سرویس: $remark
-🔋حجم سرویس: $volume گیگ
-⏰ مدت سرویس: " . daysLabel($days) . "⁮⁮ ⁮⁮
-" . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
-💝 config : <code>$link</code>":"");
-if($botState['subLinkState'] == "on") $acc_text .= "
-
-
-
-\n🌐 subscription : <code>$subLink</code>";
+                $acc_text = buildAccountText($protocol, $remark, $volume, $days, $link, $subLink, $serverType, ($serverType != "marzban" && isset($response) && is_object($response)) ? ($response->subId ?? "") : "");
             
                 sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
             }
@@ -4388,19 +4330,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
                 $vray_link = json_encode($vraylink);
             }
             foreach($vraylink as $link){
-                $acc_text = "
-😍 سفارش جدید شما
-📡 پروتکل: $protocol
-🔮 نام سرویس: $remark
-🔋حجم سرویس: $volume گیگ
-⏰ مدت سرویس: " . daysLabel($days) . "
-" . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
-💝 config : <code>$link</code>":"");
-if($botState['subLinkState'] == "on") $acc_text .= "
-
-
-
-\n🌐 subscription : <code>$subLink</code>";
+                $acc_text = buildAccountText($protocol, $remark, $volume, $days, $link, $subLink, $serverType, ($serverType != "marzban" && isset($response) && is_object($response)) ? ($response->subId ?? "") : "");
             
                 sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $uid);
             }
@@ -5835,19 +5765,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
     foreach($vraylink as $link){
-        $acc_text = "
-😍 سفارش جدید شما
-📡 پروتکل: $protocol
-🔮 نام سرویس: $remark
-🔋حجم سرویس: $volume گیگ
-⏰ مدت سرویس: " . daysLabel($days) . "
-" . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
-💝 config : <code>$link</code>":"");
-if($botState['subLinkState'] == "on") $acc_text .= "
-
-
-
-\n🌐 subscription : <code>$subLink</code>";
+        $acc_text = buildAccountText($protocol, $remark, $volume, $days, $link, $subLink, $serverType, ($serverType != "marzban" && isset($response) && is_object($response)) ? ($response->subId ?? "") : "");
     
         sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), null);
     }
@@ -5992,13 +5910,35 @@ if($userInfo['step'] == "importAccountSub" && isset($update->message) && $text !
     $stmt->execute();
     $owner = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-    if($owner){
-        sendMessage("⚠️ | این اکانت از قبل توی لیست کاربر " . $owner['userid'] . " هست", $removeKeyboard, null);
-        setUser();
-        exit();
-    }
     $totalText = $account['total'] > 0 ? sumerize($account['total']) : "نامحدود";
     $expiryText = $account['expiry'] > 0 ? jdate("Y-m-d H:i", intdiv($account['expiry'], 1000)) : "نامحدود";
+    if($owner){
+        // the account belongs to a customer already: show it and ask if it has to be moved
+        $stmt = $connection->prepare("SELECT `id` FROM `orders_list` WHERE `uuid` = ? AND `server_id` = ?");
+        $stmt->bind_param("si", $account['uuid'], $account['server_id']);
+        $stmt->execute();
+        $orderRow = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $storeAccount = $account;
+        unset($storeAccount['server']);
+        $storeAccount['order_id'] = (int)$orderRow['id'];
+        $storeAccount['owner'] = (string)$owner['userid'];
+        setUser('importAccountTransfer' . json_encode($storeAccount, JSON_UNESCAPED_UNICODE));
+        sendMessage("⚠️ | این اکانت الان برای یک کاربر دیگه ثبت شده
+
+🔮 نام: " . $account['email'] . "
+🌍 سرور: " . $account['server'] . "
+📡 پروتکل: " . $account['protocol'] . "
+🔋 حجم: " . $totalText . "
+⏰ انقضا: " . $expiryText . "
+👤 کاربر فعلی: " . $owner['userid'] . "
+
+می‌خواهی این اکانت را از این کاربر به کاربر دیگری منتقل کنی؟", json_encode(['inline_keyboard' => [
+            [['text' => "✅ بله، منتقل کن", 'callback_data' => "importTransferYes"], ['text' => "❌ نه", 'callback_data' => "importTransferNo"]]
+        ]]), null);
+        exit();
+    }
     $storeAccount = $account;
     unset($storeAccount['server']);   // keep the step text short
     setUser('importAccountUser' . json_encode($storeAccount, JSON_UNESCAPED_UNICODE));
@@ -6012,6 +5952,20 @@ if($userInfo['step'] == "importAccountSub" && isset($update->message) && $text !
 
 👤 حالا آیدی عددی مشتری رو بفرست:", $cancelKey, null);
     exit();
+}
+if(preg_match('/^importAccountTransfer(.*)/', $userInfo['step'], $stepMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(($data ?? "") == "importTransferNo"){
+        delMessage();
+        setUser('importAccountSub');
+        sendMessage("🔗 | لینک ساب اکانت دیگه ای رو بفرست", $cancelKey, null);
+        exit();
+    }
+    if(($data ?? "") == "importTransferYes"){
+        delMessage();
+        setUser('importAccountUser' . $stepMatch[1]);
+        sendMessage("👤 | آیدی عددی کاربر جدید رو بفرست:", $cancelKey, null);
+        exit();
+    }
 }
 if(preg_match('/^importAccountUser(.*)/', $userInfo['step'], $match) && isset($update->message) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(!ctype_digit(trim($text))){
@@ -6030,6 +5984,30 @@ if(preg_match('/^importAccountUser(.*)/', $userInfo['step'], $match) && isset($u
     }
 
     $account = json_decode($match[1], true);
+    if(!empty($account['order_id'])){
+        // transfer: the order of the old customer moves to the new customer, plan and dates stay
+        if((string)$account['owner'] === (string)$customerId){
+            sendMessage("⚠️ | این اکانت همین الان برای همین کاربر ثبت شده، آیدی کاربر دیگه ای رو بفرست", null, null);
+            exit();
+        }
+        $isAgentCustomer = 0;
+        $stmt = $connection->prepare("SELECT `is_agent` FROM `users` WHERE `userid` = ?");
+        $stmt->bind_param("i", $customerId);
+        $stmt->execute();
+        if(($stmt->get_result()->fetch_assoc()['is_agent'] ?? 0) == 1) $isAgentCustomer = 1;
+        $stmt->close();
+
+        $newOwner = (string)$customerId;
+        $stmt = $connection->prepare("UPDATE `orders_list` SET `userid` = ?, `agent_bought` = ? WHERE `id` = ?");
+        $stmt->bind_param("sii", $newOwner, $isAgentCustomer, $account['order_id']);
+        $stmt->execute();
+        $stmt->close();
+
+        setUser();
+        sendMessage("✅ | اکانت " . $account['email'] . " از کاربر " . $account['owner'] . " به کاربر " . $customerId . " منتقل شد", $removeKeyboard, null);
+        sendMessage("✅ یک سرویس جدید ( " . $account['email'] . " ) به لیست کانفیگ های شما اضافه شد", null, null, $customerId);
+        exit();
+    }
     $account['customer'] = $customerId;
     setUser('importAccountPlan' . json_encode($account, JSON_UNESCAPED_UNICODE));
 

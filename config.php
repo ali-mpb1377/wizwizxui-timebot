@@ -1712,6 +1712,12 @@ function getUserOrderDetailKeys($id, $offset = 0){
         
         $enable = $enable == true? $buttonValues['active']:$buttonValues['deactive'];
         $msg = str_replace(['STATE', 'NAME','CONNECT-LINK', 'SUB-LINK'], [$enable, $remark, $configLinks, $subLink], $mainValues['config_details_message']);
+
+        // user / password for apps that log in with them ( user = email, password = sub id ): always shown, one tap copies
+        if($serverType != "marzban"){
+            $passwordValue = (strlen($token) != 30) ? $token : $clientSubId;
+            if($passwordValue != "") $msg = rtrim($msg) . "\n\n👤 یوزر: <code>" . $remark . "</code>\n🔑 پسورد: <code>" . $passwordValue . "</code>\n";
+        }
     
         $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
         return ["keyboard"=>json_encode([
@@ -1779,6 +1785,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
         $panel_url = $serverConfig['panel_url'];
         
         $found = false;
+        $clientSubId = "";
 
         if($serverType == "marzban"){
             $info = getMarzbanUser($server_id, $remark);
@@ -1798,6 +1805,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                         $clients = json_decode($row->settings)->clients;
                         if($clients[0]->id == $uuid || $clients[0]->password == $uuid) {
                             $found = true;
+                            $clientSubId = $clients[0]->subId ?? "";
                             $total = $row->total;
                             $up = $row->up;
                             $down = $row->down; 
@@ -1838,6 +1846,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                             foreach($clients as $key => $client){
                                 if($client->id == $uuid || $client->password == $uuid){
                                     $found = true;
+                                    $clientSubId = $client->subId ?? "";
                                     $email = $client->email;
                                     $emails = array_column($clientsStates,'email');
                                     $emailKey = array_search($email,$emails);
@@ -4834,6 +4843,33 @@ function getAccountPanelState($order){
         }
     }
     return $state;
+}
+
+
+/**
+ * The message a customer receives with a new account.
+ * Sections ( info, user / password, config, subscription ) are separated by one empty line,
+ * a section that is switched off leaves no empty space. <code> makes every value copyable with one tap.
+ */
+function buildAccountText($protocol, $remark, $volume, $days, $link, $subLink, $serverType, $subId = ""){
+    global $botState;
+    $blocks = [];
+    $blocks[] = "😍 <b>سفارش جدید شما</b>\n\n"
+        . "📡 پروتکل: " . $protocol . "\n"
+        . "🔮 نام سرویس: " . $remark . "\n"
+        . "🔋 حجم: " . (($volume == 0) ? "نامحدود" : $volume . " گیگ") . "\n"
+        . "⏰ مدت: " . daysLabel($days);
+    if($serverType != "marzban" && $subId !== "" && $subId !== null){
+        // for apps that log in with a user and a password: user = email, password = sub id
+        $blocks[] = "👤 یوزر: <code>" . $remark . "</code>\n🔑 پسورد: <code>" . $subId . "</code>";
+    }
+    if(($botState['configLinkState'] ?? "") != "off" && $serverType != "marzban" && $link != ""){
+        $blocks[] = "💝 کانفیگ:\n<code>" . $link . "</code>";
+    }
+    if(($botState['subLinkState'] ?? "") == "on" && $subLink != ""){
+        $blocks[] = "🌐 لینک اشتراک ( subscription ):\n<code>" . $subLink . "</code>";
+    }
+    return implode("\n\n", $blocks);
 }
 
 function getAccountQrPayloads($link, $subLink){

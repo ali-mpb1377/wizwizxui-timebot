@@ -281,24 +281,7 @@ if($botState['cartToCartAutoAcceptState']=="on"){
                     $vray_link = json_encode($vraylink);
                 }
                 foreach($vraylink as $link){
-                $acc_text = "
-                
-        😍 سفارش جدید شما
-        📡 پروتکل: $protocol
-        🔮 نام سرویس: $remark
-        🔋حجم سرویس: $volume گیگ
-        ⏰ مدت سرویس: " . daysLabel($days) . "⁮⁮ ⁮⁮
-        " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
-        💝 config : <code>$link</code>":"");
-        
-        if($botState['subLinkState'] == "on") $acc_text .= "
-        
-        
-        
-        
-        🌐 subscription : <code>$subLink</code>
-                
-                ";
+                $acc_text = buildAccountText($protocol, $remark, $volume, $days, $link, $subLink, $serverType, ($serverType != "marzban" && isset($response) && is_object($response)) ? ($response->subId ?? "") : "");
                       
                     sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), $user_id);
                 }

@@ -402,25 +402,7 @@ if($payType == "BUY_SUB"){
         }
 
         foreach($vraylink as $link){
-            $acc_text = "
-😍 سفارش جدید شما
-📡 پروتکل: $protocol
-🔮 نام سرویس: $remark
-🔋حجم سرویس: $volume گیگ
-⏰ مدت سرویس: " . daysLabel($days) . "
-".
-($botState['configLinkState'] != "off" && $serverType != "marzban"?
-"
-💝 config : <code>$link</code>":"").
-($botState['subLinkState']=="on"?
-"
-
-
-
-
-🌐 subscription : <code>$subLink</code>
-    
-            ":"");
+            $acc_text = buildAccountText($protocol, $remark, $volume, $days, $link, $subLink, $serverType, ($serverType != "marzban" && isset($response) && is_object($response)) ? ($response->subId ?? "") : "");
         
             sendAccountQr(getAccountQrPayloads($link, $subLink), $acc_text, json_encode(['inline_keyboard'=>[[['text'=>"صفحه اصلی 🏘",'callback_data'=>"mainMenu"]]]]), $user_id);
         }
