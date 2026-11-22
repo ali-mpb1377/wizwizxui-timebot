@@ -7011,6 +7011,20 @@ if(preg_match('/^panelPlanVolume(.*)/',$userInfo['step'],$match) and $text != $b
     }
     $planData = json_decode($match[1], true);
     $planData['volume'] = $text + 0;
+    setUser('panelPlanLimit' . json_encode($planData));
+    sendMessage("🔌 | تعداد اتصال همزمان را وارد کنید
+
+▪️ این عدد هم برای IP Limit و هم برای HWID Limit استفاده میشود
+▪️ 0 یعنی نامحدود");
+    exit();
+}
+if(preg_match('/^panelPlanLimit(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(!ctype_digit(trim($text))){
+        sendMessage($mainValues['send_only_number']);
+        exit();
+    }
+    $planData = json_decode($match[1], true);
+    $planData['limit'] = (int)trim($text);
     if(!empty($planData['test'])){
         // a test plan is free: go straight on to the category with price 0
         $userInfo['step'] = 'panelPlanPrice' . json_encode($planData);
@@ -7068,7 +7082,7 @@ if(preg_match('/^panelPlanCat(\d+)/',$data,$match) and preg_match('/^panelPlanCa
     $planDays = (float)$planData['days'];
     $planVolume = (float)$planData['volume'];
     $planCapacity = 100000;   // capacity of a shared inbound plan, decreases with every sale
-    $planLimitIp = 0;
+    $planLimitIp = (int)($planData['limit'] ?? 0);   // IP limit and HWID limit ( one number )
     $planPrice = (int)$planData['price'];
     $planDate = (string)$time;
     $planServerId = (int)$planData['server_id'];
@@ -7272,6 +7286,35 @@ if(preg_match('/^wizwizplanslimit(\d+)/',$userInfo['step'], $match) && $text != 
     sendMessage("با موفقیت برات تغییر دادم ☺️☑️");
     setUser();
     
+    $keys = getPlanDetailsKeys($match[1]);
+    if($keys == null){
+        alert("موردی یافت نشد");
+        exit;
+    }else sendMessage("ویرایش تنظیمات پلن", $keys, "HTML");
+}
+if(preg_match('/^wizwizplanconnlimit(\d+)/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    setUser($data);
+    delMessage();
+    sendMessage("🔌 | تعداد اتصال همزمان جدید را وارد کنید
+
+▪️ این عدد هم برای IP Limit و هم برای HWID Limit استفاده میشود
+▪️ 0 یعنی نامحدود
+▪️ فقط روی اکانت هایی که از این به بعد با این پلن ساخته میشوند اعمال میشود", $cancelKey, null);
+    exit;
+}
+if(preg_match('/^wizwizplanconnlimit(\d+)/',$userInfo['step'], $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(!ctype_digit(trim($text))){
+        sendMessage($mainValues['send_only_number']);
+        exit;
+    }
+    $newLimit = (int)trim($text);
+    $stmt = $connection->prepare("UPDATE `server_plans` SET `limitip` = ? WHERE `id` = ?");
+    $stmt->bind_param("ii", $newLimit, $match[1]);
+    $stmt->execute();
+    $stmt->close();
+
+    sendMessage("با موفقیت برات تغییر دادم ☺️☑️", $removeKeyboard);
+    setUser();
     $keys = getPlanDetailsKeys($match[1]);
     if($keys == null){
         alert("موردی یافت نشد");

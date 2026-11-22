@@ -1422,6 +1422,7 @@ function getPlanDetailsKeys($planId){
             [['text'=>$wizwizplanaccnumber,'callback_data'=>"wizwizch"],['text'=>"🎗 تعداد اکانت های فروخته شده",'callback_data'=>"wizwizch"]],
             ($pd['inbound_id'] != 0?[['text'=>"$acount",'callback_data'=>"wizwizplanslimit$id"],['text'=>"🚪 تغییر ظرفیت کانفیگ",'callback_data'=>"wizwizch"]]:[]),
             ($pd['inbound_id'] != 0?[['text'=>$pd['inbound_id'],'callback_data'=>"wizwizplansinobundid$id"],['text'=>"🚪 سطر کانفیگ",'callback_data'=>"wizwizch"]]:[]),
+            ($server_info['type'] != "marzban"?[['text'=>($pd['limitip'] == 0 ? "نامحدود" : $pd['limitip']),'callback_data'=>"wizwizplanconnlimit$id"],['text'=>"🔌 تعداد اتصال ( IP / HWID Limit )",'callback_data'=>"wizwizch"]]:[]),
             [['text'=>"✏️ ویرایش توضیحات",'callback_data'=>"wizwizplaneditdes$id"]],
             [['text'=>number_format($price) . " تومان",'callback_data'=>"wizwizplanrial$id"],['text'=>"💰 قیمت پلن",'callback_data'=>"wizwizch"]],
             [['text'=>"♻️ دریافت لیست اکانت ها",'callback_data'=>"wizwizplanacclist$id"]],
@@ -1715,7 +1716,7 @@ function getUserOrderDetailKeys($id, $offset = 0){
 
         // user / password for apps that log in with them ( user = email, password = sub id ): always shown, one tap copies
         if($serverType != "marzban"){
-            $passwordValue = (strlen($token) != 30) ? $token : $clientSubId;
+            $passwordValue = (strlen($token) != 30) ? $token : ($clientSubId ?? "");
             if($passwordValue != "") $msg = rtrim($msg) . "\n\n👤 یوزر: <code>" . $remark . "</code>\n🔑 پسورد: <code>" . $passwordValue . "</code>\n";
         }
     
@@ -2043,6 +2044,12 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
         else $subLink = $botState['subLinkState']=="on"?"<code>" . getOrderSubLink($server_id, $serverType, $token) . "</code>":"";
 
         $msg = str_replace(['STATE', 'NAME','CONNECT-LINK', 'SUB-LINK'], [$enable, $remark, $configLinks, $subLink], $mainValues['config_details_message']);
+
+        // user / password for apps that log in with them ( user = email, password = sub id ): always shown, one tap copies
+        if($serverType != "marzban"){
+            $passwordValue = (strlen($token) != 30) ? $token : $clientSubId;
+            if($passwordValue != "") $msg = rtrim($msg) . "\n\n👤 یوزر: <code>" . $remark . "</code>\n🔑 پسورد: <code>" . $passwordValue . "</code>\n";
+        }
         
         
         if($found){
@@ -2845,6 +2852,7 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
                     "enable" => true,
                     "email" => $remark,
                     "limitIp" => $limitip,
+                    "limitHwid" => $limitip,   // the same number for the device limit
                     "flow" => $flow,
                     "totalGB" => $volume,
                     "expiryTime" => $expiryTime,
@@ -2856,6 +2864,7 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
                     "enable" => true,
                     "email" => $remark,
                     "limitIp" => $limitip,
+                    "limitHwid" => $limitip,   // the same number for the device limit
                     "totalGB" => $volume,
                     "expiryTime" => $expiryTime,
                     "subId" => $subId
@@ -2867,6 +2876,7 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
                 "flow" => "",
                 "email" => $remark,
                 "limitIp" => $limitip,
+                    "limitHwid" => $limitip,   // the same number for the device limit
                 "totalGB" => $volume,
                 "expiryTime" => $expiryTime
             ];
@@ -4975,6 +4985,15 @@ function getNewCert($server_id){
 function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark, $volume, $netType, $security = 'none', $rahgozar = false, $planId = null){
     global $connection;
     $subId = makeSubId($remark);  // subId = email (username)
+    // IP limit and HWID limit: one number, taken from the plan
+    $limitip = 0;
+    if($planId){
+        $limitStmt = $connection->prepare("SELECT `limitip` FROM `server_plans` WHERE `id` = ?");
+        $limitStmt->bind_param("i", $planId);
+        $limitStmt->execute();
+        $limitip = (int)($limitStmt->get_result()->fetch_assoc()['limitip'] ?? 0);
+        $limitStmt->close();
+    }
     $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
     $stmt->bind_param("i", $server_id);
     $stmt->execute();
@@ -5030,7 +5049,8 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
         		  "id": "'.$client_id.'",
                   "enable": true,
                   "email": "' . $remark. '",
-                  "limitIp": 0,
+                  "limitIp": ' . $limitip . ',
+                  "limitHwid": ' . $limitip . ',
                   "totalGB": 0,
                   "expiryTime": 0,
                   "subId": "' . $subId . '"
@@ -5108,7 +5128,8 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
 			  "password": "'.$client_id.'",
               "enable": true,
               "email": "' . $remark. '",
-              "limitIp": 0,
+              "limitIp": ' . $limitip . ',
+                  "limitHwid": ' . $limitip . ',
               "totalGB": 0,
               "expiryTime": 0,
               "subId": "' . $subId . '"
@@ -5205,7 +5226,8 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
         		  "id": "'.$client_id.'",
                   "enable": true,
         		  "email": "' . $remark. '",
-                  "limitIp": 0,
+                  "limitIp": ' . $limitip . ',
+                  "limitHwid": ' . $limitip . ',
                   "totalGB": 0,
                   "expiryTime": 0,
                   "subId": "' . $subId . '"
@@ -5253,7 +5275,8 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
                   "id": "'.$client_id.'",
                   "enable": true,
                   "email": "' . $remark. '",
-                  "limitIp": 0,
+                  "limitIp": ' . $limitip . ',
+                  "limitHwid": ' . $limitip . ',
                   "totalGB": 0,
                   "expiryTime": 0,
                   "subId": "' . $subId . '"
@@ -5322,7 +5345,8 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
         		  "id": "'.$client_id.'",
         		  "enable": true,
         		  "email": "' . $remark. '",
-                  "limitIp": 0,
+                  "limitIp": ' . $limitip . ',
+                  "limitHwid": ' . $limitip . ',
                   "totalGB": 0,
                   "expiryTime": 0,
                   "subId": "' . $subId . '"
@@ -5437,7 +5461,8 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
         				  "enable": true,
                           "email": "' . $remark. '",
                           "flow": "' . $flow .'",
-                          "limitIp": 0,
+                          "limitIp": ' . $limitip . ',
+                  "limitHwid": ' . $limitip . ',
                           "totalGB": 0,
                           "expiryTime": 0,
                           "subId": "' . $subId . '"
@@ -5454,7 +5479,8 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
         				  "id": "'.$client_id.'",
         				  "enable": true,
                           "email": "' . $remark. '",
-                          "limitIp": 0,
+                          "limitIp": ' . $limitip . ',
+                  "limitHwid": ' . $limitip . ',
                           "totalGB": 0,
                           "expiryTime": 0,
                           "subId": "' . $subId . '"
